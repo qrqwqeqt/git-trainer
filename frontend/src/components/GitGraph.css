@@ -1,0 +1,65 @@
+.git-graph {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+.git-graph--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem;
+  color: #888;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.git-graph--empty code {
+  background: rgba(127, 127, 127, 0.15);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #333;
+}
+
+.commit-node {
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  width: 180px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.commit-node__sha {
+  color: #888;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.commit-node__label {
+  margin: 4px 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  color: #222;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commit-node__branch {
+  display: inline-block;
+  background: #e3f2fd;
+  color: #1565c0;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
