@@ -1,8 +1,9 @@
 """WebSocket event handlers.
 
 Іменування — згідно з CLAUDE.md: `on_<event>`. Кожен хендлер є async і
-отримує room_id, user_id та вхідне повідомлення. Всі помилки логуються з
-контекстом (room_id, user_id).
+отримує room_id, user_id та вхідне повідомлення. Усі помилки логуються з
+контекстом (room_id, user_id) і не валять WebSocket-з'єднання — натомість
+повертається ERROR-повідомлення відправнику.
 """
 from __future__ import annotations
 
@@ -11,6 +12,9 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from app.docker import sandbox_manager
+from app.docker.sandbox import SandboxError
+from app.git.executor import GitCommandError, GitCommandExecutor
 from app.models.schemas import WSMessage, WSMessageType
 from app.ws.manager import connection_manager
 
@@ -41,25 +45,58 @@ async def on_git_command(
     command: str,
     sender: WebSocket,
 ) -> None:
-    """Обробити Git-команду від студента.
+    """Виконати git-команду в sandbox-контейнері кімнати; повідомити всіх.
 
-    TODO: делегувати `app.git.executor.GitCommandExecutor`, отримати GitEvent
-    і транслювати через `connection_manager.broadcast`. Поки що — заглушка,
-    яка лише відбиває команду назад у кімнату.
+    Послідовність:
+      1. lazy-start sandbox (idempotent, перший виклик піднімає контейнер).
+      2. executor.run(command) → ExecOutcome.
+      3. broadcast GIT_EVENT (action, stdout, stderr, exit_code).
+      4. Якщо була write-команда і вона успішна — broadcast GRAPH_UPDATE.
+
+    Помилки валідації / sandbox-у віддаються відправнику як ERROR; інші
+    учасники кімнати їх не бачать (це private помилка студента).
     """
     logger.info(
         "ws.git_command.received",
         extra={"room_id": room_id, "user_id": user_id, "command": command},
     )
-    # TODO(executor): викликати executor.run(room_id, command) і надсилати
-    #                 реальний GIT_EVENT / GRAPH_UPDATE.
-    echo = WSMessage(
+
+    try:
+        await sandbox_manager.start(room_id)
+    except SandboxError as exc:
+        await _send_error(sender, "sandbox_unavailable", str(exc))
+        return
+
+    executor = GitCommandExecutor(room_id, sandbox_manager)
+    try:
+        outcome = await executor.run(command)
+    except GitCommandError as exc:
+        await _send_error(sender, "invalid_command", str(exc))
+        return
+    except SandboxError as exc:
+        await _send_error(sender, "sandbox_error", str(exc))
+        return
+
+    git_event = WSMessage(
         type=WSMessageType.GIT_EVENT,
-        action="echo",
+        action=outcome.action,
         userId=user_id,
-        payload={"command": command, "status": "stub"},
+        payload={
+            "command": command,
+            "argv": outcome.argv,
+            "exit_code": outcome.exit_code,
+            "stdout": outcome.stdout,
+            "stderr": outcome.stderr,
+        },
     )
-    await connection_manager.broadcast(room_id, echo)
+    await connection_manager.broadcast(room_id, git_event)
+
+    if outcome.graph is not None:
+        graph_msg = WSMessage(
+            type=WSMessageType.GRAPH_UPDATE,
+            graph=outcome.graph,
+        )
+        await connection_manager.broadcast(room_id, graph_msg)
 
 
 async def on_unknown_message(
@@ -73,11 +110,12 @@ async def on_unknown_message(
         "ws.unknown_message",
         extra={"room_id": room_id, "user_id": user_id, "raw": raw},
     )
-    err = WSMessage(
-        type=WSMessageType.ERROR,
-        payload={"reason": "unknown_message_type", "received": raw.get("type")},
+    await _send_error(
+        sender,
+        "unknown_message_type",
+        f"received={raw.get('type')}",
+        extra={"received": raw.get("type")},
     )
-    await sender.send_json(err.model_dump(mode="json"))
 
 
 async def dispatch(
@@ -96,3 +134,18 @@ async def dispatch(
         await on_git_command(room_id, user_id, command, sender)
     else:
         await on_unknown_message(room_id, user_id, raw, sender)
+
+
+async def _send_error(
+    sender: WebSocket,
+    reason: str,
+    detail: str,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Відправити ERROR-повідомлення тільки тому, хто його спричинив."""
+    payload: dict[str, Any] = {"reason": reason, "detail": detail}
+    if extra:
+        payload.update(extra)
+    msg = WSMessage(type=WSMessageType.ERROR, payload=payload)
+    await sender.send_json(msg.model_dump(mode="json"))

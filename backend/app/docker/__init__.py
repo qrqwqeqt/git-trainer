@@ -7,6 +7,7 @@ from app.docker.sandbox import (
     SandboxLimitError,
     SandboxManager,
     SandboxTimeoutError,
+    sandbox_manager,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "SandboxLimitError",
     "SandboxManager",
     "SandboxTimeoutError",
+    "sandbox_manager",
 ]

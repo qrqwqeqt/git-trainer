@@ -301,3 +301,9 @@ class SandboxManager:
 
     def get(self, room_id: str) -> SandboxContainer | None:
         return self._containers.get(room_id)
+
+
+# Модуль-рівневий singleton — імпортуємо у хендлерах і lifespan.
+# docker-клієнт ініціалізується ліниво в _client_or_connect, тому
+# створення цього об'єкта саме по собі дешеве й безпечне для тестів.
+sandbox_manager = SandboxManager()

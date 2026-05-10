@@ -1,13 +1,35 @@
-"""Smoke-тести: /health REST + WebSocket echo/broadcast.
+"""Smoke-тести: /health REST + WebSocket broadcast/error/git-command.
 
-Ці тести мають запускатись БЕЗ реальної БД і Docker — усі I/O залежності
-в main.py — заглушки.
+Ці тести мають запускатись БЕЗ реального docker-daemon-а — sandbox_manager
+підмінюється фейком у фікстурі `fake_sandbox`.
 """
 from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+
+from app.docker.sandbox import ExecResult
+
+
+@pytest.fixture()
+def fake_sandbox(monkeypatch):
+    """Підміняємо sandbox_manager у handlers, щоб тести не торкались Docker.
+
+    За замовчуванням `exec` повертає вдалий результат для git-status; тести,
+    яким потрібен інший вивід, перевизначають side_effect.
+    """
+    fake = MagicMock()
+    fake.start = AsyncMock(return_value=MagicMock())
+    fake.exec = AsyncMock(
+        return_value=ExecResult(
+            exit_code=0, stdout="On branch main\n", stderr=""
+        )
+    )
+    monkeypatch.setattr("app.ws.handlers.sandbox_manager", fake)
+    return fake
 
 
 @pytest.mark.asyncio
@@ -54,8 +76,8 @@ def test_websocket_user_joined_broadcast(app) -> None:
             assert first_for_bob["userId"] == "bob"
 
 
-def test_websocket_git_command_stub(app) -> None:
-    """GIT_COMMAND поки що echo-ається як GIT_EVENT action=echo."""
+def test_websocket_git_status_no_graph_update(app, fake_sandbox) -> None:
+    """git status — read-only: GIT_EVENT приходить, GRAPH_UPDATE — ні."""
     client = TestClient(app)
     with client.websocket_connect("/ws/r1?user_id=u1&username=U1") as ws:
         _ = ws.receive_json()  # USER_JOINED для самого себе
@@ -67,8 +89,64 @@ def test_websocket_git_command_stub(app) -> None:
         )
         evt = ws.receive_json()
         assert evt["type"] == "GIT_EVENT"
-        assert evt["action"] == "echo"
+        assert evt["action"] == "status"
+        assert evt["userId"] == "u1"
         assert evt["payload"]["command"] == "git status"
+        assert evt["payload"]["argv"] == ["git", "status"]
+        assert evt["payload"]["exit_code"] == 0
+        assert evt["payload"]["stdout"] == "On branch main\n"
+
+    # exec викликався лише раз — для status; graph refresh не йшов.
+    assert fake_sandbox.exec.call_count == 1
+
+
+def test_websocket_git_commit_triggers_graph_update(app, fake_sandbox) -> None:
+    """git commit — write-команда: спочатку GIT_EVENT, потім GRAPH_UPDATE."""
+    fake_sandbox.exec.side_effect = [
+        ExecResult(exit_code=0, stdout="[main abc123] init\n", stderr=""),
+        # log refresh: один рут-комміт
+        ExecResult(
+            exit_code=0, stdout="abc123||HEAD -> main|init\n", stderr=""
+        ),
+    ]
+    client = TestClient(app)
+    with client.websocket_connect("/ws/r2?user_id=u1&username=U1") as ws:
+        _ = ws.receive_json()  # USER_JOINED
+        ws.send_json(
+            {
+                "type": "GIT_COMMAND",
+                "payload": {"command": "git commit -m init"},
+            }
+        )
+        evt = ws.receive_json()
+        assert evt["type"] == "GIT_EVENT"
+        assert evt["action"] == "commit"
+        assert evt["payload"]["exit_code"] == 0
+
+        graph_msg = ws.receive_json()
+        assert graph_msg["type"] == "GRAPH_UPDATE"
+        nodes = graph_msg["graph"]["nodes"]
+        assert len(nodes) == 1
+        assert nodes[0]["id"] == "abc123"
+        assert nodes[0]["branch"] == "main"
+
+
+def test_websocket_invalid_git_command_replies_error(app, fake_sandbox) -> None:
+    """Невалідна команда (поза whitelist) → ERROR лише відправнику."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws/r3?user_id=u1&username=U1") as ws:
+        _ = ws.receive_json()  # USER_JOINED
+        ws.send_json(
+            {
+                "type": "GIT_COMMAND",
+                "payload": {"command": "git push origin main"},
+            }
+        )
+        err = ws.receive_json()
+        assert err["type"] == "ERROR"
+        assert err["payload"]["reason"] == "invalid_command"
+    # Команда відхилена ще на валідації — exec не запускався.
+    fake_sandbox.exec.assert_not_called()
 
 
 def test_websocket_unknown_message(app) -> None:
