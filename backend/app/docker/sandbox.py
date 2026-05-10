@@ -30,6 +30,7 @@ LABEL_ROOM_ID = "git-trainer.room_id"
 DEFAULT_MEM_LIMIT = "256m"
 DEFAULT_PIDS_LIMIT = 128
 STOP_TIMEOUT_SECONDS = 5
+EXEC_TIMEOUT_SECONDS = 10.0
 
 
 class SandboxError(Exception):
@@ -44,6 +45,10 @@ class SandboxImageMissingError(SandboxError):
     """Image для sandbox не знайдено локально (треба зробити docker build)."""
 
 
+class SandboxTimeoutError(SandboxError):
+    """Виконання команди в sandbox-і перевищило встановлений тайм-аут."""
+
+
 @dataclass(slots=True)
 class SandboxContainer:
     """Легкий запис про запущений sandbox-контейнер."""
@@ -52,6 +57,15 @@ class SandboxContainer:
     room_id: str
     image: str
     name: str
+
+
+@dataclass(slots=True)
+class ExecResult:
+    """Результат виконання argv усередині sandbox-контейнера."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
 
 
 class SandboxManager:
@@ -209,20 +223,76 @@ class SandboxManager:
 
     # -------------------------------- exec --------------------------------
 
-    async def exec(self, room_id: str, argv: list[str]) -> tuple[int, str]:
-        """Виконати argv всередині sandbox.
+    async def exec(
+        self,
+        room_id: str,
+        argv: list[str],
+        *,
+        timeout: float = EXEC_TIMEOUT_SECONDS,
+    ) -> ExecResult:
+        """Виконати argv всередині sandbox-контейнера.
 
-        TODO(phase-1.3): client.containers.get(id).exec_run(argv, demux=True),
-        повертати реальний (exit_code, combined_output).
+        Повертає ExecResult з exit_code та декодованими stdout/stderr
+        (UTF-8, errors=replace для безпеки).
+
+        NOTE про тайм-аут: реалізовано через `asyncio.wait_for`. Якщо тайм-аут
+        спрацьовує, сама команда у контейнері продовжує виконуватись — docker
+        SDK не має API для скасування exec. Захист від ескалації — через
+        pids_limit / mem_limit / network=none / cap_drop, заданих у start().
         """
         async with self._lock:
             sandbox = self._containers.get(room_id)
         if sandbox is None:
             raise SandboxError(f"no sandbox running for room {room_id}")
+
+        client = await self._client_or_connect()
+        try:
+            container = await asyncio.to_thread(
+                client.containers.get, sandbox.container_id
+            )
+        except NotFound as exc:
+            raise SandboxError(
+                f"sandbox container missing for room {room_id}"
+            ) from exc
+
+        try:
+            exit_code, output = await asyncio.wait_for(
+                asyncio.to_thread(container.exec_run, argv, demux=True),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            logger.warning(
+                "sandbox.exec.timeout",
+                extra={
+                    "room_id": room_id,
+                    "argv": argv,
+                    "timeout_s": timeout,
+                },
+            )
+            raise SandboxTimeoutError(
+                f"sandbox exec timed out after {timeout}s"
+            ) from exc
+        except APIError as exc:
+            raise SandboxError(f"sandbox exec failed: {exc}") from exc
+
+        # demux=True → output це (stdout_bytes, stderr_bytes); кожна з них
+        # може бути None, якщо відповідний потік порожній.
+        if output is None:
+            stdout_bytes, stderr_bytes = None, None
+        else:
+            stdout_bytes, stderr_bytes = output
+        stdout = (stdout_bytes or b"").decode("utf-8", errors="replace")
+        stderr = (stderr_bytes or b"").decode("utf-8", errors="replace")
+
         logger.info(
-            "sandbox.exec.stub", extra={"room_id": room_id, "argv": argv}
+            "sandbox.exec",
+            extra={
+                "room_id": room_id,
+                "argv": argv,
+                "exit_code": exit_code,
+            },
         )
-        return 0, "(stub output)"
+        return ExecResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
     # ---------------------------- Introspection ---------------------------
 

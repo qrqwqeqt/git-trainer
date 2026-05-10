@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,10 +17,12 @@ from app.docker.sandbox import (
     DEFAULT_PIDS_LIMIT,
     LABEL_MANAGED,
     LABEL_ROOM_ID,
+    ExecResult,
     SandboxError,
     SandboxImageMissingError,
     SandboxLimitError,
     SandboxManager,
+    SandboxTimeoutError,
 )
 
 
@@ -144,3 +147,107 @@ async def test_verify_ok(patch_docker, settings):
     await mgr.verify()
     patch_docker.ping.assert_called_once()
     patch_docker.images.get.assert_called_once_with("git-trainer-sandbox:test")
+
+
+# --------------------------------- exec ---------------------------------
+
+
+async def test_exec_returns_decoded_output(patch_docker, settings):
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+    container.exec_run.return_value = (0, (b"on branch main\n", b""))
+
+    result = await mgr.exec("r1", ["git", "status"])
+
+    assert isinstance(result, ExecResult)
+    assert result.exit_code == 0
+    assert result.stdout == "on branch main\n"
+    assert result.stderr == ""
+    container.exec_run.assert_called_once_with(["git", "status"], demux=True)
+
+
+async def test_exec_handles_none_streams(patch_docker, settings):
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+    container.exec_run.return_value = (0, (None, None))
+
+    result = await mgr.exec("r1", ["git", "status"])
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+async def test_exec_handles_none_output(patch_docker, settings):
+    """Деякі версії docker SDK можуть віддати output=None для порожнього виводу."""
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+    container.exec_run.return_value = (0, None)
+
+    result = await mgr.exec("r1", ["true"])
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+async def test_exec_propagates_nonzero_exit(patch_docker, settings):
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+    container.exec_run.return_value = (
+        128,
+        (b"", b"fatal: not a git repository\n"),
+    )
+
+    result = await mgr.exec("r1", ["git", "log"])
+    assert result.exit_code == 128
+    assert result.stderr == "fatal: not a git repository\n"
+
+
+async def test_exec_room_unknown_raises(patch_docker, settings):
+    mgr = SandboxManager(settings=settings)
+    with pytest.raises(SandboxError):
+        await mgr.exec("ghost", ["git", "status"])
+
+
+async def test_exec_decodes_invalid_utf8_with_replace(patch_docker, settings):
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+    container.exec_run.return_value = (0, (b"\xff\xfeok\n", b""))
+
+    result = await mgr.exec("r1", ["true"])
+    # «зіпсовані» байти замінюються на U+FFFD, а не падаємо UnicodeDecodeError
+    assert "ok" in result.stdout
+    assert "�" in result.stdout
+
+
+async def test_exec_timeout_raises(patch_docker, settings):
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+
+    release = threading.Event()
+
+    def _slow(*_args, **_kwargs):
+        release.wait(timeout=2.0)
+        return (0, (b"", b""))
+
+    container.exec_run.side_effect = _slow
+
+    try:
+        with pytest.raises(SandboxTimeoutError):
+            await mgr.exec("r1", ["sleep", "100"], timeout=0.05)
+    finally:
+        # Відпускаємо thread, щоб не висів після тесту.
+        release.set()
+
+
+async def test_exec_api_error_wrapped(patch_docker, settings):
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+    container.exec_run.side_effect = APIError("daemon angry")
+
+    with pytest.raises(SandboxError):
+        await mgr.exec("r1", ["git", "status"])
