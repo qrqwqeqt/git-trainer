@@ -108,10 +108,73 @@ async def test_start_image_missing_translates_error(patch_docker, settings):
 
 
 async def test_start_api_error_wrapped(patch_docker, settings):
-    patch_docker.containers.run.side_effect = APIError("name conflict")
+    # Generic API error (без «already in use») — wrap у SandboxError.
+    patch_docker.containers.run.side_effect = APIError("internal server error")
     mgr = SandboxManager(settings=settings)
     with pytest.raises(SandboxError):
         await mgr.start("r1")
+
+
+async def test_start_name_conflict_adopts_and_retries(patch_docker, settings):
+    """Якщо container з таким іменем уже є (orphan) — видалити й створити заново."""
+    conflict = APIError(
+        "Conflict. The container name \"/git-trainer-r1\" is already in use"
+    )
+    success_container = patch_docker.containers.run.return_value
+    patch_docker.containers.run.side_effect = [conflict, success_container]
+
+    mgr = SandboxManager(settings=settings)
+    sandbox = await mgr.start("r1")
+
+    assert sandbox.room_id == "r1"
+    # Старий контейнер дістали через containers.get і викинули.
+    patch_docker.containers.get.assert_called_with("git-trainer-r1")
+    orphan = patch_docker.containers.get.return_value
+    orphan.remove.assert_called_once_with(force=True)
+    # run викликався двічі — спершу conflict, потім успіх.
+    assert patch_docker.containers.run.call_count == 2
+
+
+async def test_cleanup_orphans_removes_labeled_containers(patch_docker, settings):
+    c1 = MagicMock()
+    c1.id = "abc1"
+    c2 = MagicMock()
+    c2.id = "abc2"
+    patch_docker.containers.list.return_value = [c1, c2]
+
+    mgr = SandboxManager(settings=settings)
+    removed = await mgr.cleanup_orphans()
+
+    assert removed == 2
+    patch_docker.containers.list.assert_called_once_with(
+        all=True,
+        filters={"label": "git-trainer.managed=true"},
+    )
+    c1.remove.assert_called_once_with(force=True)
+    c2.remove.assert_called_once_with(force=True)
+
+
+async def test_cleanup_orphans_returns_zero_when_none(patch_docker, settings):
+    patch_docker.containers.list.return_value = []
+    mgr = SandboxManager(settings=settings)
+    assert await mgr.cleanup_orphans() == 0
+
+
+async def test_cleanup_orphans_swallows_per_container_failures(patch_docker, settings):
+    """Помилка видалення одного контейнера не повинна валити cleanup усіх."""
+    from docker.errors import APIError as _APIError
+
+    c_ok = MagicMock()
+    c_ok.id = "ok"
+    c_fail = MagicMock()
+    c_fail.id = "fail"
+    c_fail.remove.side_effect = _APIError("daemon angry")
+    patch_docker.containers.list.return_value = [c_ok, c_fail]
+
+    mgr = SandboxManager(settings=settings)
+    removed = await mgr.cleanup_orphans()
+    # Один успішно видалили, інший залишився — не падаємо.
+    assert removed == 1
 
 
 async def test_stop_calls_docker_and_frees_slot(patch_docker, settings):

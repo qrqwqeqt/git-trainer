@@ -23,6 +23,7 @@ from starlette.websockets import WebSocketState
 from app import __version__
 from app.api import rooms_router, sessions_router, users_router
 from app.config import Settings, get_settings
+from app.docker.sandbox import SandboxError, sandbox_manager
 from app.models.schemas import HealthResponse
 from app.ws.handlers import dispatch, on_user_joined, on_user_left
 from app.ws.manager import connection_manager
@@ -43,8 +44,7 @@ logger = logging.getLogger("app.main")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup / shutdown hooks.
 
-    TODO: ініціалізувати async SQLAlchemy engine + session maker, перевірити
-    доступність docker daemon, прогріти sandbox image.
+    TODO: ініціалізувати async SQLAlchemy engine + session maker.
     """
     settings: Settings = get_settings()
     app.state.started_at = time.monotonic()
@@ -53,10 +53,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "app.startup",
         extra={"version": __version__, "debug": settings.debug},
     )
+
+    # Підчистити sandbox-orphan-и з попереднього запуску. Якщо daemon
+    # офлайн — не фатально: ленivий start() сам обробить колізію імен,
+    # коли користувач першу команду надішле.
+    try:
+        await sandbox_manager.cleanup_orphans()
+    except SandboxError as exc:
+        logger.warning(
+            "app.startup.orphan_cleanup_skipped",
+            extra={"reason": str(exc)},
+        )
+
     try:
         yield
     finally:
         logger.info("app.shutdown")
+        try:
+            await sandbox_manager.close()
+        except Exception:  # noqa: BLE001 — shutdown має бути тихим
+            logger.exception("app.shutdown.sandbox_close_failed")
 
 
 # ----------------------------- App ---------------------------------

@@ -49,6 +49,17 @@ class SandboxTimeoutError(SandboxError):
     """Виконання команди в sandbox-і перевищило встановлений тайм-аут."""
 
 
+def _is_name_conflict(exc: APIError) -> bool:
+    """docker daemon відповідає 409 з підстрокою «already in use» при колізії
+    імені контейнера. У docker-py статус-код доступний як `exc.status_code`,
+    але це обʼєкт може бути None — тому ще і дивимось у текст помилки.
+    """
+    status = getattr(exc, "status_code", None)
+    if status == 409:
+        return True
+    return "already in use" in str(exc).lower()
+
+
 @dataclass(slots=True)
 class SandboxContainer:
     """Легкий запис про запущений sandbox-контейнер."""
@@ -113,6 +124,41 @@ class SandboxManager:
         finally:
             self._client = None
 
+    async def cleanup_orphans(self) -> int:
+        """Видалити sandbox-контейнери, лишені від попереднього запуску backend-а.
+
+        Кликати з lifespan startup. Знаходимо контейнери за ярликом
+        LABEL_MANAGED, не зважаючи на стан (running/stopped/dead). Повертає
+        кількість видалених. Якщо daemon недоступний — кидає SandboxError,
+        викликач сам вирішує, фатально це чи warning.
+        """
+        client = await self._client_or_connect()
+        try:
+            containers = await asyncio.to_thread(
+                client.containers.list,
+                all=True,
+                filters={"label": f"{LABEL_MANAGED}=true"},
+            )
+        except DockerException as exc:
+            raise SandboxError(f"failed to list orphan containers: {exc}") from exc
+
+        removed = 0
+        for c in containers:
+            try:
+                await asyncio.to_thread(c.remove, force=True)
+                removed += 1
+            except NotFound:
+                pass
+            except APIError:
+                logger.warning(
+                    "sandbox.cleanup.remove_failed",
+                    extra={"container_id": c.id},
+                    exc_info=True,
+                )
+        if removed:
+            logger.info("sandbox.cleanup.done", extra={"removed": removed})
+        return removed
+
     # ------------------------------ start/stop -----------------------------
 
     async def start(self, room_id: str) -> SandboxContainer:
@@ -128,30 +174,62 @@ class SandboxManager:
 
             client = await self._client_or_connect()
             name = f"git-trainer-{room_id}"
+            run_kwargs = {
+                "detach": True,
+                "name": name,
+                # ---- мережна та системна ізоляція ----
+                "network_mode": "none",
+                "cap_drop": ["ALL"],
+                "security_opt": ["no-new-privileges:true"],
+                # ---- ресурсні ліміти ----
+                "mem_limit": DEFAULT_MEM_LIMIT,
+                "pids_limit": DEFAULT_PIDS_LIMIT,
+                # ---- ярлики для cleanup orphans ----
+                "labels": {LABEL_MANAGED: "true", LABEL_ROOM_ID: room_id},
+            }
             try:
                 container: Container = await asyncio.to_thread(
                     client.containers.run,
                     self._settings.sandbox_image,
-                    detach=True,
-                    name=name,
-                    # ---- мережна та системна ізоляція ----
-                    network_mode="none",
-                    cap_drop=["ALL"],
-                    security_opt=["no-new-privileges:true"],
-                    # ---- ресурсні ліміти ----
-                    mem_limit=DEFAULT_MEM_LIMIT,
-                    pids_limit=DEFAULT_PIDS_LIMIT,
-                    # ---- ярлики для cleanup orphans ----
-                    labels={LABEL_MANAGED: "true", LABEL_ROOM_ID: room_id},
+                    **run_kwargs,
                 )
             except ImageNotFound as exc:
                 raise SandboxImageMissingError(
                     f"sandbox image {self._settings.sandbox_image!r} not found"
                 ) from exc
             except APIError as exc:
-                raise SandboxError(
-                    f"failed to start sandbox for {room_id}: {exc}"
-                ) from exc
+                # Name conflict — orphan від попереднього запуску backend-а,
+                # який не потрапив у cleanup_orphans (наприклад, daemon був
+                # offline при старті). Видаляємо та робимо одну повторну спробу.
+                if _is_name_conflict(exc):
+                    logger.warning(
+                        "sandbox.start.name_conflict.adopting",
+                        extra={"container_name": name, "room_id": room_id},
+                    )
+                    try:
+                        old = await asyncio.to_thread(client.containers.get, name)
+                        await asyncio.to_thread(old.remove, force=True)
+                    except NotFound:
+                        pass
+                    except APIError as remove_exc:
+                        raise SandboxError(
+                            f"failed to remove orphan {name}: {remove_exc}"
+                        ) from remove_exc
+                    try:
+                        container = await asyncio.to_thread(
+                            client.containers.run,
+                            self._settings.sandbox_image,
+                            **run_kwargs,
+                        )
+                    except APIError as retry_exc:
+                        raise SandboxError(
+                            f"failed to start sandbox for {room_id} after "
+                            f"orphan cleanup: {retry_exc}"
+                        ) from retry_exc
+                else:
+                    raise SandboxError(
+                        f"failed to start sandbox for {room_id}: {exc}"
+                    ) from exc
 
             sandbox = SandboxContainer(
                 container_id=container.id,
