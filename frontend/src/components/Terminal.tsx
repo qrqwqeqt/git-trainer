@@ -82,16 +82,35 @@ export function Terminal({ onCommand }: TerminalProps) {
     if (!container) return
 
     const term = new XTerm({
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace',
+      fontFamily:
+        '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace',
       fontSize: 13,
-      lineHeight: 1.2,
+      lineHeight: 1.3,
       cursorBlink: true,
       convertEol: false,
       theme: {
-        background: '#1e1e1e',
-        foreground: '#e0e0e0',
-        cursor: '#e0e0e0',
-        cursorAccent: '#1e1e1e',
+        background: '#08080b',
+        foreground: '#e4e4e7',
+        cursor: '#c084fc',
+        cursorAccent: '#08080b',
+        selectionBackground: '#1e2a4a',
+        // ANSI палітра під загальну тему — приглушені, але читабельні.
+        black: '#3a3a45',
+        brightBlack: '#565660',
+        red: '#f87171',
+        brightRed: '#fca5a5',
+        green: '#4ade80',
+        brightGreen: '#86efac',
+        yellow: '#fbbf24',
+        brightYellow: '#fcd34d',
+        blue: '#60a5fa',
+        brightBlue: '#93c5fd',
+        magenta: '#c084fc',
+        brightMagenta: '#d8b4fe',
+        cyan: '#38bdf8',
+        brightCyan: '#7dd3fc',
+        white: '#d4d4d8',
+        brightWhite: '#f4f4f5',
       },
     })
     const fit = new FitAddon()

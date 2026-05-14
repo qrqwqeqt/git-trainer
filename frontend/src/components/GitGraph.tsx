@@ -133,6 +133,7 @@ function GitGraphInner() {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        colorMode="dark"
         fitView
         fitViewOptions={{ padding: 0.25 }}
         nodesDraggable={false}
@@ -141,7 +142,7 @@ function GitGraphInner() {
         elementsSelectable={false}
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={16} size={1} />
+        <Background gap={24} size={1} color="#1f1f26" />
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>
