@@ -12,6 +12,15 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from uuid import UUID
+
+from app.db import get_sessionmaker
+from app.db.repository import (
+    create_session_row,
+    get_or_create_room,
+    get_or_create_user,
+    mark_session_disconnected,
+)
 from app.docker import sandbox_manager
 from app.docker.sandbox import SandboxError
 from app.git.executor import GitCommandError, GitCommandExecutor
@@ -26,13 +35,17 @@ async def on_user_joined(
     user_id: str,
     username: str,
     sender: WebSocket | None = None,
-) -> None:
-    """Повідомити кімнаті, що підключився новий студент.
+) -> UUID | None:
+    """Повідомити кімнаті про підключення, записати Session-рядок у БД.
 
-    Якщо у кімнаті вже працює sandbox (хтось до цього виконував команди),
-    щойно під’єднаному клієнту надсилаємо приватний GRAPH_UPDATE-snapshot.
-    Без цього новий клієнт бачив би порожній граф до наступної команди,
-    хоч у репо вже є комміти.
+    Повертає UUID створеної Session-row (або None, якщо запис у БД не вдався —
+    у такому разі WS-стрім лишається робочим, persistence просто пропускається).
+    db_session_id передаємо назад у websocket_endpoint, щоб on_user_left міг
+    закрити саме цей рядок.
+
+    Окрім broadcast USER_JOINED, якщо у кімнаті вже працює sandbox (хтось до
+    цього виконував команди) — щойно під’єднаному клієнту надсилаємо приватний
+    GRAPH_UPDATE-snapshot, щоб він не бачив порожній граф до наступної команди.
     """
     msg = WSMessage(
         type=WSMessageType.USER_JOINED,
@@ -42,11 +55,34 @@ async def on_user_joined(
     await connection_manager.broadcast(room_id, msg)
     logger.info("ws.user_joined", extra={"room_id": room_id, "user_id": user_id})
 
-    if sender is None:
-        return
+    db_session_id: UUID | None = None
+    try:
+        sm = get_sessionmaker()
+        async with sm() as db:
+            user = await get_or_create_user(db, username=username)
+            room = await get_or_create_room(
+                db, slug=room_id, owner_id=user.id, display_name=room_id
+            )
+            row = await create_session_row(db, room_id=room.id, user_id=user.id)
+            await db.commit()
+            db_session_id = row.id
+    except Exception:  # noqa: BLE001 — persistence не повинна ламати WS-стрім
+        logger.exception(
+            "ws.user_joined.persist_failed",
+            extra={"room_id": room_id, "user_id": user_id},
+        )
+
+    if sender is not None:
+        await _maybe_send_snapshot(room_id, user_id, sender)
+
+    return db_session_id
+
+
+async def _maybe_send_snapshot(
+    room_id: str, user_id: str, sender: WebSocket
+) -> None:
     sandbox = sandbox_manager.get(room_id)
     if sandbox is None:
-        # У кімнаті ще не було жодної команди — нічого надсилати.
         return
     executor = GitCommandExecutor(room_id, sandbox_manager)
     try:
@@ -70,11 +106,37 @@ async def on_user_joined(
         )
 
 
-async def on_user_left(room_id: str, user_id: str) -> None:
-    """Повідомити кімнаті про відключення."""
+async def on_user_left(
+    room_id: str,
+    user_id: str,
+    db_session_id: UUID | None = None,
+) -> None:
+    """Повідомити кімнаті про відключення, закрити Session-рядок у БД.
+
+    db_session_id передається з websocket_endpoint (повернуто on_user_joined).
+    Якщо persistence не вдався при joined — db_session_id буде None, тут
+    просто пропускаємо update.
+    """
     msg = WSMessage(type=WSMessageType.USER_LEFT, userId=user_id)
     await connection_manager.broadcast(room_id, msg)
     logger.info("ws.user_left", extra={"room_id": room_id, "user_id": user_id})
+
+    if db_session_id is None:
+        return
+    try:
+        sm = get_sessionmaker()
+        async with sm() as db:
+            await mark_session_disconnected(db, db_session_id)
+            await db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "ws.user_left.persist_failed",
+            extra={
+                "room_id": room_id,
+                "user_id": user_id,
+                "db_session_id": str(db_session_id),
+            },
+        )
 
 
 async def on_git_command(

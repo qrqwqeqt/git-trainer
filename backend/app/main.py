@@ -130,8 +130,11 @@ def create_app() -> FastAPI:
         username: str = Query(..., min_length=1),
     ) -> None:
         await connection_manager.connect(room_id, websocket)
+        db_session_id = None
         try:
-            await on_user_joined(room_id, user_id, username, websocket)
+            db_session_id = await on_user_joined(
+                room_id, user_id, username, websocket
+            )
             while True:
                 raw = await websocket.receive_json()
                 if not isinstance(raw, dict):
@@ -152,7 +155,7 @@ def create_app() -> FastAPI:
                 await websocket.close(code=1011)
         finally:
             await connection_manager.disconnect(room_id, websocket)
-            await on_user_left(room_id, user_id)
+            await on_user_left(room_id, user_id, db_session_id)
 
     @app.get("/", tags=["meta"])
     async def root() -> dict[str, str]:

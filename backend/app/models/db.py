@@ -39,6 +39,9 @@ class Room(Base):
     __tablename__ = "rooms"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    # `slug` — публічний рядковий ідентифікатор з URL (`/ws/{slug}`). Доменна
+    # модель — uuid `id`; slug — для людського посилання та для lookup-у з WS.
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     owner_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False

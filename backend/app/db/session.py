@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.models.db import Base
@@ -31,12 +32,17 @@ def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         settings = get_settings()
-        _engine = create_async_engine(
-            settings.database_url,
-            echo=False,  # ввімкнемо у Phase 7 під DEBUG
-            future=True,
-            pool_pre_ping=True,
-        )
+        # SQLite (dev/тести) → NullPool: connection pool погано переноситься
+        # між event loop-ами (TestClient портал → конфлікти на teardown),
+        # а для file-SQLite пул мало що дає. Для Postgres лишаємо default
+        # QueuePool з pool_pre_ping.
+        is_sqlite = settings.database_url.startswith("sqlite")
+        engine_kwargs: dict[str, object] = {"echo": False, "future": True}
+        if is_sqlite:
+            engine_kwargs["poolclass"] = NullPool
+        else:
+            engine_kwargs["pool_pre_ping"] = True
+        _engine = create_async_engine(settings.database_url, **engine_kwargs)
         logger.info(
             "db.engine.created",
             extra={

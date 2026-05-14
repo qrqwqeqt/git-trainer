@@ -1,38 +1,17 @@
 """Smoke-тести: /health REST + WebSocket broadcast/error/git-command.
 
 Ці тести мають запускатись БЕЗ реального docker-daemon-а — sandbox_manager
-підмінюється фейком у фікстурі `fake_sandbox`.
+підмінюється фейком у фікстурі `fake_sandbox` (з conftest.py).
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from app.docker.sandbox import ExecResult
-
-
-@pytest.fixture()
-def fake_sandbox(monkeypatch):
-    """Підміняємо sandbox_manager у handlers, щоб тести не торкались Docker.
-
-    За замовчуванням `exec` повертає вдалий результат для git-status; тести,
-    яким потрібен інший вивід, перевизначають side_effect.
-    """
-    fake = MagicMock()
-    fake.start = AsyncMock(return_value=MagicMock())
-    fake.exec = AsyncMock(
-        return_value=ExecResult(
-            exit_code=0, stdout="On branch main\n", stderr=""
-        )
-    )
-    # За замовчуванням у кімнаті ще немає sandbox-у — snapshot при connect
-    # не запускається. Тести, що перевіряють snapshot, перевизначають це.
-    fake.get.return_value = None
-    monkeypatch.setattr("app.ws.handlers.sandbox_manager", fake)
-    return fake
 
 
 @pytest.mark.asyncio
