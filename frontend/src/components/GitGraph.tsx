@@ -29,9 +29,12 @@ interface CommitNodeData extends Record<string, unknown> {
 type CommitNodeType = Node<CommitNodeData, 'commit'>
 
 function CommitNode({ data }: NodeProps<CommitNodeType>) {
+  // Layout: дитячі коміти зверху, parent — знизу (dagre setEdge child→parent
+  // у TB напрямку). Тому source (parent) має «дивитися» вгору, а target
+  // (child) — вниз: edge тоді йде природно знизу-вверх без петель.
   return (
     <div className="commit-node">
-      <Handle type="target" position={Position.Top} isConnectable={false} />
+      <Handle type="target" position={Position.Bottom} isConnectable={false} />
       <div className="commit-node__sha">{data.sha.slice(0, 7)}</div>
       <div className="commit-node__label" title={data.label}>
         {data.label || '(no message)'}
@@ -39,7 +42,7 @@ function CommitNode({ data }: NodeProps<CommitNodeType>) {
       {data.branch && (
         <div className="commit-node__branch">{data.branch}</div>
       )}
-      <Handle type="source" position={Position.Bottom} isConnectable={false} />
+      <Handle type="source" position={Position.Top} isConnectable={false} />
     </div>
   )
 }

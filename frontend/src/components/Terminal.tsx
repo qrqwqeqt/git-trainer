@@ -13,37 +13,66 @@ export interface TerminalProps {
 }
 
 const PROMPT = '$ '
+const HISTORY_LIMIT = 200
+
+// xterm присилає одно-байтові escape-коди для Ctrl-комбінацій:
+const KEY = {
+  CTRL_A: 1,
+  CTRL_C: 3,
+  CTRL_E: 5,
+  CTRL_K: 11,
+  CTRL_L: 12,
+  CTRL_U: 21,
+  CTRL_W: 23,
+  ENTER: 13,
+  BACKSPACE: 127,
+  ESC: 27,
+}
+
 const ANSI = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  undim: '\x1b[22m',
-  cyan: '\x1b[36m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
+  reset: '[0m',
+  dim: '[2m',
+  undim: '[22m',
+  cyan: '[36m',
+  red: '[31m',
+  green: '[32m',
+  yellow: '[33m',
+}
+
+/** Перерисувати рядок prompt-а: clear → prompt + buffer → курсор у позиції. */
+function redrawInput(term: XTerm, buffer: string, cursorPos: number): void {
+  term.write('\r[K' + PROMPT + buffer)
+  const moveBack = buffer.length - cursorPos
+  if (moveBack > 0) term.write(`[${moveBack}D`)
 }
 
 /**
- * Псевдо-термінал на xterm.js.
+ * Псевдо-термінал на xterm.js з bash-подібними скороченнями:
  *
- * UX-нюанси:
- *   * Сам ввід ми накопичуємо у `inputBuffer` поки не приходить '\r' —
- *     тоді шлемо `onCommand(cmd)` і чекаємо на GIT_EVENT, який сам
- *     надрукує prompt $ заново.
- *   * Якщо подія від іншого юзера приходить в момент, коли ти набираєш —
- *     ми очищуємо поточний рядок (`\r\x1b[K`), друкуємо подію та
- *     відновлюємо `$ <твій буфер>`. Курсор лишається у кінці.
- *   * Реконнект / async — через підписку на zustand store. Не зачіпаємо
- *     xterm з-зовні; усі мутації через цей компонент.
+ *   Enter            — відправити команду
+ *   Backspace/Delete — стерти символ
+ *   ← → Home End     — пересувати курсор (Ctrl+A/E теж працює)
+ *   ↑ ↓              — історія команд (до HISTORY_LIMIT записів)
+ *   Ctrl+U / Ctrl+K  — стерти до початку / до кінця рядка
+ *   Ctrl+W           — стерти слово перед курсором
+ *   Ctrl+L           — очистити екран
+ *   Ctrl+C           — скинути поточний ввід
  */
 export function Terminal({ onCommand }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
-  const inputBufferRef = useRef('')
   const onCommandRef = useRef(onCommand)
   const seenEventsRef = useRef(0)
 
-  // Тримаємо callback свіжим без реконнекту терміналу.
+  // Стан рядка вводу
+  const inputBufferRef = useRef('')
+  const cursorPosRef = useRef(0)
+
+  // Історія
+  const historyRef = useRef<string[]>([])
+  const historyIndexRef = useRef<number | null>(null)
+  const draftBufferRef = useRef('') // буфер до початку навігації
+
   useEffect(() => {
     onCommandRef.current = onCommand
   }, [onCommand])
@@ -71,50 +100,236 @@ export function Terminal({ onCommand }: TerminalProps) {
     try {
       fit.fit()
     } catch {
-      /* контейнер може бути ще не виміряний — ResizeObserver нижче зробить fit. */
+      /* контейнер ще без розмірів — ResizeObserver зробить fit пізніше. */
     }
     termRef.current = term
 
-    // Replay подій, що могли накопичитись до mount-а.
+    // Replay подій, що могли надійти до mount-а.
     const initial = useGitStore.getState().events
     for (const ev of initial) renderEventLines(term, ev)
     seenEventsRef.current = initial.length
 
     term.write(
-      `Git Trainer — введи команду, напр. ${ANSI.cyan}git status${ANSI.reset}\r\n`,
+      `Git Trainer — ${ANSI.dim}Enter${ANSI.reset} відправити, ` +
+        `${ANSI.dim}↑↓${ANSI.reset} історія, ` +
+        `${ANSI.dim}Ctrl+L${ANSI.reset} очистити.\r\n`,
     )
     term.write(PROMPT)
 
     const dataDisp = term.onData((data) => {
       const buf = inputBufferRef.current
-      if (data === '\r') {
+      const pos = cursorPosRef.current
+      const code = data.length === 1 ? data.charCodeAt(0) : -1
+
+      // --------------------- однобайтові коди ---------------------
+
+      if (code === KEY.ENTER) {
         const cmd = buf.trim()
         term.write('\r\n')
-        inputBufferRef.current = ''
         if (cmd) {
+          const h = historyRef.current
+          if (h.length === 0 || h[h.length - 1] !== cmd) {
+            h.push(cmd)
+            if (h.length > HISTORY_LIMIT) h.shift()
+          }
+          historyIndexRef.current = null
+          draftBufferRef.current = ''
+          inputBufferRef.current = ''
+          cursorPosRef.current = 0
           onCommandRef.current(cmd)
-          // prompt прийде разом з GIT_EVENT від сервера
+          // prompt прийде з GIT_EVENT від сервера
         } else {
+          inputBufferRef.current = ''
+          cursorPosRef.current = 0
           term.write(PROMPT)
         }
-      } else if (data === '') {
-        if (buf.length > 0) {
-          inputBufferRef.current = buf.slice(0, -1)
-          term.write('\b \b')
-        }
-      } else if (data === '') {
+        return
+      }
+
+      if (code === KEY.CTRL_C) {
         term.write('^C\r\n')
         inputBufferRef.current = ''
+        cursorPosRef.current = 0
+        historyIndexRef.current = null
         term.write(PROMPT)
-      } else if (data.length === 1 && data >= ' ') {
-        inputBufferRef.current = buf + data
-        term.write(data)
-      } else if (data.length > 1 && /^[\x20-\x7E]+$/.test(data)) {
-        // paste з буфера обміну
-        inputBufferRef.current = buf + data
-        term.write(data)
+        return
       }
-      // інші escape-послідовності (стрілки тощо) поки що ігноруємо
+
+      if (code === KEY.BACKSPACE) {
+        if (pos > 0) {
+          inputBufferRef.current = buf.slice(0, pos - 1) + buf.slice(pos)
+          cursorPosRef.current = pos - 1
+          redrawInput(term, inputBufferRef.current, cursorPosRef.current)
+        }
+        return
+      }
+
+      if (code === KEY.CTRL_A) {
+        if (pos > 0) {
+          term.write(`[${pos}D`)
+          cursorPosRef.current = 0
+        }
+        return
+      }
+
+      if (code === KEY.CTRL_E) {
+        const delta = buf.length - pos
+        if (delta > 0) {
+          term.write(`[${delta}C`)
+          cursorPosRef.current = buf.length
+        }
+        return
+      }
+
+      if (code === KEY.CTRL_U) {
+        if (pos > 0) {
+          inputBufferRef.current = buf.slice(pos)
+          cursorPosRef.current = 0
+          redrawInput(term, inputBufferRef.current, 0)
+        }
+        return
+      }
+
+      if (code === KEY.CTRL_K) {
+        if (pos < buf.length) {
+          inputBufferRef.current = buf.slice(0, pos)
+          redrawInput(term, inputBufferRef.current, cursorPosRef.current)
+        }
+        return
+      }
+
+      if (code === KEY.CTRL_W) {
+        if (pos > 0) {
+          let i = pos
+          while (i > 0 && buf[i - 1] === ' ') i -= 1
+          while (i > 0 && buf[i - 1] !== ' ') i -= 1
+          inputBufferRef.current = buf.slice(0, i) + buf.slice(pos)
+          cursorPosRef.current = i
+          redrawInput(term, inputBufferRef.current, cursorPosRef.current)
+        }
+        return
+      }
+
+      if (code === KEY.CTRL_L) {
+        term.clear()
+        redrawInput(term, buf, pos)
+        return
+      }
+
+      // --------------------- escape-послідовності ---------------------
+
+      if (data.charCodeAt(0) === KEY.ESC && data.length >= 2) {
+        const seq = data.slice(1)
+
+        // Up — '[A' (cursor mode) або 'OA' (application mode)
+        if (seq === '[A' || seq === 'OA') {
+          const h = historyRef.current
+          if (h.length === 0) return
+          const cur = historyIndexRef.current
+          if (cur === null) {
+            draftBufferRef.current = buf
+            historyIndexRef.current = h.length - 1
+          } else if (cur > 0) {
+            historyIndexRef.current = cur - 1
+          } else {
+            return
+          }
+          const cmd = h[historyIndexRef.current]
+          inputBufferRef.current = cmd
+          cursorPosRef.current = cmd.length
+          redrawInput(term, cmd, cmd.length)
+          return
+        }
+
+        // Down — '[B' / 'OB'
+        if (seq === '[B' || seq === 'OB') {
+          const h = historyRef.current
+          const cur = historyIndexRef.current
+          if (cur === null) return
+          let next: string
+          if (cur < h.length - 1) {
+            historyIndexRef.current = cur + 1
+            next = h[historyIndexRef.current]
+          } else {
+            historyIndexRef.current = null
+            next = draftBufferRef.current
+          }
+          inputBufferRef.current = next
+          cursorPosRef.current = next.length
+          redrawInput(term, next, next.length)
+          return
+        }
+
+        // Left — '[D' / 'OD'
+        if (seq === '[D' || seq === 'OD') {
+          if (pos > 0) {
+            cursorPosRef.current = pos - 1
+            term.write('[D')
+          }
+          return
+        }
+
+        // Right — '[C' / 'OC'
+        if (seq === '[C' || seq === 'OC') {
+          if (pos < buf.length) {
+            cursorPosRef.current = pos + 1
+            term.write('[C')
+          }
+          return
+        }
+
+        // Home — '[H' / 'OH' / '[1~' / '[7~'
+        if (seq === '[H' || seq === 'OH' || seq === '[1~' || seq === '[7~') {
+          if (pos > 0) {
+            term.write(`[${pos}D`)
+            cursorPosRef.current = 0
+          }
+          return
+        }
+
+        // End — '[F' / 'OF' / '[4~' / '[8~'
+        if (seq === '[F' || seq === 'OF' || seq === '[4~' || seq === '[8~') {
+          const delta = buf.length - pos
+          if (delta > 0) {
+            term.write(`[${delta}C`)
+            cursorPosRef.current = buf.length
+          }
+          return
+        }
+
+        // Delete (forward) — '[3~'
+        if (seq === '[3~') {
+          if (pos < buf.length) {
+            inputBufferRef.current = buf.slice(0, pos) + buf.slice(pos + 1)
+            redrawInput(term, inputBufferRef.current, cursorPosRef.current)
+          }
+          return
+        }
+
+        // інші escape-послідовності просто ігноруємо
+        return
+      }
+
+      // --------------------- friкабельні символи ---------------------
+
+      if (data.length === 1 && code >= 32 && code <= 126) {
+        inputBufferRef.current = buf.slice(0, pos) + data + buf.slice(pos)
+        cursorPosRef.current = pos + 1
+        if (pos === buf.length) {
+          term.write(data) // швидкий шлях у кінці рядка
+        } else {
+          redrawInput(term, inputBufferRef.current, cursorPosRef.current)
+        }
+        return
+      }
+
+      // Paste (кілька printable символів за раз)
+      if (data.length > 1 && /^[\x20-\x7e]+$/.test(data)) {
+        inputBufferRef.current = buf.slice(0, pos) + data + buf.slice(pos)
+        cursorPosRef.current = pos + data.length
+        redrawInput(term, inputBufferRef.current, cursorPosRef.current)
+        return
+      }
     })
 
     const ro = new ResizeObserver(() => {
@@ -132,11 +347,9 @@ export function Terminal({ onCommand }: TerminalProps) {
       if (!t) return
       const fresh = state.events.slice(seenEventsRef.current)
       seenEventsRef.current = state.events.length
-      const currentInput = inputBufferRef.current
-      // Очищаємо рядок з prompt+input, друкуємо події, відновлюємо prompt+input.
-      t.write('\r\x1b[K')
+      t.write('\r[K')
       for (const ev of fresh) renderEventLines(t, ev)
-      t.write(PROMPT + currentInput)
+      redrawInput(t, inputBufferRef.current, cursorPosRef.current)
     })
 
     return () => {
