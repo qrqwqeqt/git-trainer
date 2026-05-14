@@ -111,7 +111,7 @@ class GitCommandExecutor:
             subcommand not in READONLY_GIT_SUBCOMMANDS
             and result.exit_code == 0
         ):
-            graph = await self._refresh_graph()
+            graph = await self.snapshot_graph()
 
         logger.info(
             "git.exec",
@@ -131,12 +131,17 @@ class GitCommandExecutor:
             graph=graph,
         )
 
-    async def _refresh_graph(self) -> GraphPayload:
+    async def snapshot_graph(self) -> GraphPayload:
         """Прочитати актуальний граф через `git log --all`.
 
         У свіжому репо без коміттів `git log` повертає exit_code != 0 —
         це не помилка, повертаємо порожній граф. Інші збої логуються та
         також зводяться до порожнього графа, щоб не валити основну команду.
+
+        Викликаємо з двох місць: (1) після write-команди у `run()`, щоб
+        повернути оновлений граф; (2) при підключенні нового клієнта у
+        `on_user_joined`, щоб віддати йому актуальний стан без чекання
+        наступної команди.
         """
         try:
             log_result = await self.sandbox.exec(self.room_id, LOG_ARGV)

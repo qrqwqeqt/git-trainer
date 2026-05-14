@@ -21,8 +21,19 @@ from app.ws.manager import connection_manager
 logger = logging.getLogger(__name__)
 
 
-async def on_user_joined(room_id: str, user_id: str, username: str) -> None:
-    """Повідомити кімнаті, що підключився новий студент."""
+async def on_user_joined(
+    room_id: str,
+    user_id: str,
+    username: str,
+    sender: WebSocket | None = None,
+) -> None:
+    """Повідомити кімнаті, що підключився новий студент.
+
+    Якщо у кімнаті вже працює sandbox (хтось до цього виконував команди),
+    щойно під’єднаному клієнту надсилаємо приватний GRAPH_UPDATE-snapshot.
+    Без цього новий клієнт бачив би порожній граф до наступної команди,
+    хоч у репо вже є комміти.
+    """
     msg = WSMessage(
         type=WSMessageType.USER_JOINED,
         userId=user_id,
@@ -30,6 +41,33 @@ async def on_user_joined(room_id: str, user_id: str, username: str) -> None:
     )
     await connection_manager.broadcast(room_id, msg)
     logger.info("ws.user_joined", extra={"room_id": room_id, "user_id": user_id})
+
+    if sender is None:
+        return
+    sandbox = sandbox_manager.get(room_id)
+    if sandbox is None:
+        # У кімнаті ще не було жодної команди — нічого надсилати.
+        return
+    executor = GitCommandExecutor(room_id, sandbox_manager)
+    try:
+        graph = await executor.snapshot_graph()
+    except Exception:  # noqa: BLE001 — snapshot не повинен ламати приєднання
+        logger.exception(
+            "ws.snapshot.failed",
+            extra={"room_id": room_id, "user_id": user_id},
+        )
+        return
+    if not graph.nodes:
+        return
+    snap = WSMessage(type=WSMessageType.GRAPH_UPDATE, graph=graph)
+    try:
+        await sender.send_json(snap.model_dump(mode="json"))
+    except Exception:  # noqa: BLE001 — клієнт міг відключитись між accept і snapshot
+        logger.warning(
+            "ws.snapshot.send_failed",
+            extra={"room_id": room_id, "user_id": user_id},
+            exc_info=True,
+        )
 
 
 async def on_user_left(room_id: str, user_id: str) -> None:

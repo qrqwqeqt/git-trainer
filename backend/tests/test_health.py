@@ -28,6 +28,9 @@ def fake_sandbox(monkeypatch):
             exit_code=0, stdout="On branch main\n", stderr=""
         )
     )
+    # За замовчуванням у кімнаті ще немає sandbox-у — snapshot при connect
+    # не запускається. Тести, що перевіряють snapshot, перевизначають це.
+    fake.get.return_value = None
     monkeypatch.setattr("app.ws.handlers.sandbox_manager", fake)
     return fake
 
@@ -129,6 +132,43 @@ def test_websocket_git_commit_triggers_graph_update(app, fake_sandbox) -> None:
         assert len(nodes) == 1
         assert nodes[0]["id"] == "abc123"
         assert nodes[0]["branch"] == "main"
+
+
+def test_websocket_snapshot_sent_to_late_joiner(app, fake_sandbox) -> None:
+    """Якщо у кімнаті вже є sandbox з коммітами, новий клієнт має одразу
+    отримати GRAPH_UPDATE snapshot після USER_JOINED — без чекання нової
+    команди.
+    """
+    # Імітуємо, що sandbox для кімнати вже існує.
+    fake_sandbox.get.return_value = MagicMock()
+    # `git log --all` повертає одну ноду.
+    fake_sandbox.exec.return_value = ExecResult(
+        exit_code=0,
+        stdout="abc123||HEAD -> main|init\n",
+        stderr="",
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/r-snap?user_id=late&username=Late") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "USER_JOINED"
+        snap = ws.receive_json()
+        assert snap["type"] == "GRAPH_UPDATE"
+        assert len(snap["graph"]["nodes"]) == 1
+        assert snap["graph"]["nodes"][0]["id"] == "abc123"
+
+
+def test_websocket_no_snapshot_when_sandbox_absent(app, fake_sandbox) -> None:
+    """Якщо sandbox-у ще немає (ніхто не вводив команд) — snapshot не шлемо."""
+    fake_sandbox.get.return_value = None
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/r-empty?user_id=first&username=First") as ws:
+        first = ws.receive_json()
+        assert first["type"] == "USER_JOINED"
+        # Більше нічого приходити не має (snapshot пропускається).
+        # Перевіряємо, що exec не викликався — він був би тільки для snapshot.
+        fake_sandbox.exec.assert_not_called()
 
 
 def test_websocket_invalid_git_command_replies_error(app, fake_sandbox) -> None:

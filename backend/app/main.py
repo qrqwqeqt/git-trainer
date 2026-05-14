@@ -117,7 +117,7 @@ def create_app() -> FastAPI:
     ) -> None:
         await connection_manager.connect(room_id, websocket)
         try:
-            await on_user_joined(room_id, user_id, username)
+            await on_user_joined(room_id, user_id, username, websocket)
             while True:
                 raw = await websocket.receive_json()
                 if not isinstance(raw, dict):
