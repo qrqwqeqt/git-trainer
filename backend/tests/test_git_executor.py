@@ -98,7 +98,7 @@ async def test_run_status_no_graph_refresh(fake_sandbox):
 async def test_run_commit_refreshes_graph(fake_sandbox):
     fake_sandbox.exec.side_effect = [
         ExecResult(0, "[main abc123] init\n", ""),
-        ExecResult(0, "abc123||HEAD -> main|init\n", ""),
+        ExecResult(0, "abc123\x1f\x1fHEAD -> main\x1finit\x1fStudent\n", ""),
     ]
     executor = GitCommandExecutor("r1", fake_sandbox)
     outcome = await executor.run("git commit -m init")

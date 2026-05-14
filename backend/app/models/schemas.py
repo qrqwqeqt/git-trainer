@@ -55,6 +55,7 @@ class GraphNode(BaseModel):
     label: str | None = None
     branch: str | None = None
     parents: list[str] = Field(default_factory=list)
+    author: str | None = None
 
 
 class GraphEdge(BaseModel):

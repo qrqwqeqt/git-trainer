@@ -11,9 +11,12 @@ from __future__ import annotations
 
 from app.models.schemas import GraphEdge, GraphNode, GraphPayload
 
-# `git log` формат: <hash>|<parent1 parent2 ...>|<refs decoration>|<subject>.
-# %D друкує decoration без обрамлення в дужки (на відміну від %d).
-LOG_FORMAT = "%H|%P|%D|%s"
+# Розділяємо поля Unit Separator-ом (ASCII 0x1F) замість '|', щоб subject
+# міг містити будь-які символи (включно з '|') без шкоди для парсингу.
+# %D друкує decoration без обрамлення в дужки (на відміну від %d);
+# %an — author name (показуємо у tooltip-і фронту).
+SEP = "\x1f"
+LOG_FORMAT = f"%H{SEP}%P{SEP}%D{SEP}%s{SEP}%an"
 
 # Команда, яку SandboxManager виконує після write-операцій, щоб отримати
 # актуальний граф. --all включає всі гілки, --reflog виключаємо: показуємо
@@ -27,11 +30,12 @@ LOG_ARGV: list[str] = [
 
 
 def parse_graph(stdout: str) -> GraphPayload:
-    """Розібрати вивід `git log --all --format=%H|%P|%D|%s` у GraphPayload.
+    """Розібрати вивід `git log --all --format=...` у GraphPayload.
 
-    Порожні та неповні рядки тихо ігноруються — це робить парсер стійким до
-    будь-якого «сміття» з контейнера. Subject може містити '|' — для цього
-    розбиваємо лише на 4 частини.
+    Розділювач полів — Unit Separator (\\x1F), тому subject може містити
+    будь-які символи, включно з '|'. Порожні та неповні рядки тихо
+    ігноруються — це робить парсер стійким до будь-якого «сміття»
+    з контейнера.
     """
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
@@ -41,11 +45,14 @@ def parse_graph(stdout: str) -> GraphPayload:
         line = raw_line.rstrip("\r")
         if not line:
             continue
-        parts = line.split("|", 3)
+        parts = line.split(SEP)
         if len(parts) < 4:
             continue
-        sha, parents_str, decoration, subject = parts
-        sha = sha.strip()
+        sha = parts[0].strip()
+        parents_str = parts[1]
+        decoration = parts[2]
+        subject = parts[3]
+        author = parts[4] if len(parts) >= 5 else ""
         if not sha or sha in seen:
             continue
         seen.add(sha)
@@ -59,6 +66,7 @@ def parse_graph(stdout: str) -> GraphPayload:
                 label=subject or sha[:7],
                 branch=primary_branch,
                 parents=parent_list,
+                author=author or None,
             )
         )
         for parent in parent_list:

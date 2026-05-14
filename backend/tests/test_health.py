@@ -88,7 +88,7 @@ def test_websocket_git_commit_triggers_graph_update(app, fake_sandbox) -> None:
         ExecResult(exit_code=0, stdout="[main abc123] init\n", stderr=""),
         # log refresh: один рут-комміт
         ExecResult(
-            exit_code=0, stdout="abc123||HEAD -> main|init\n", stderr=""
+            exit_code=0, stdout="abc123\x1f\x1fHEAD -> main\x1finit\x1fStudent\n", stderr=""
         ),
     ]
     client = TestClient(app)
@@ -123,7 +123,7 @@ def test_websocket_snapshot_sent_to_late_joiner(app, fake_sandbox) -> None:
     # `git log --all` повертає одну ноду.
     fake_sandbox.exec.return_value = ExecResult(
         exit_code=0,
-        stdout="abc123||HEAD -> main|init\n",
+        stdout="abc123\x1f\x1fHEAD -> main\x1finit\x1fStudent\n",
         stderr="",
     )
 

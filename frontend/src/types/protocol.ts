@@ -20,6 +20,7 @@ export interface GraphNode {
   label: string | null
   branch: string | null
   parents: string[]
+  author: string | null
 }
 
 export interface GraphEdge {
