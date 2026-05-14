@@ -23,6 +23,7 @@ from starlette.websockets import WebSocketState
 from app import __version__
 from app.api import rooms_router, sessions_router, users_router
 from app.config import Settings, get_settings
+from app.db import close_db, init_db
 from app.docker.sandbox import SandboxError, sandbox_manager
 from app.models.schemas import HealthResponse
 from app.ws.handlers import dispatch, on_user_joined, on_user_left
@@ -54,6 +55,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         extra={"version": __version__, "debug": settings.debug},
     )
 
+    # Ініціалізуємо БД — створюємо таблиці, якщо їх ще немає.
+    # Для SQLite (dev default) це створить файл; для Postgres — no-op,
+    # бо там схема накатується Alembic-ом, а create_all пропустить існуючі.
+    try:
+        await init_db()
+    except Exception:
+        logger.exception("app.startup.db_init_failed")
+        raise
+
     # Підчистити sandbox-orphan-и з попереднього запуску. Якщо daemon
     # офлайн — не фатально: ленivий start() сам обробить колізію імен,
     # коли користувач першу команду надішле.
@@ -73,6 +83,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await sandbox_manager.close()
         except Exception:  # noqa: BLE001 — shutdown має бути тихим
             logger.exception("app.shutdown.sandbox_close_failed")
+        try:
+            await close_db()
+        except Exception:  # noqa: BLE001
+            logger.exception("app.shutdown.db_close_failed")
 
 
 # ----------------------------- App ---------------------------------

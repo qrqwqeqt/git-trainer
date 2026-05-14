@@ -30,9 +30,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # --- Database ---
+    # Default — file SQLite для dev/quickstart (0 setup). У проді
+    # підставляйте Postgres через env DATABASE_URL:
+    #   postgresql+asyncpg://user:pass@host:5432/gittrainer
     database_url: str = Field(
-        default="postgresql+asyncpg://user:pass@localhost:5432/gittrainer",
-        description="Async SQLAlchemy DSN (asyncpg driver).",
+        default="sqlite+aiosqlite:///./gittrainer.db",
+        description="Async SQLAlchemy DSN.",
     )
 
     # --- Auth ---
