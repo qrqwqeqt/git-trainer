@@ -5,7 +5,7 @@
   background: var(--bg-elevated);
   color: var(--text);
   overflow: auto;
-  padding: 0.5rem 0;
+  padding: 1.5rem 0 0.75rem;
 }
 
 .git-graph--empty {

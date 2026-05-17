@@ -6,10 +6,11 @@ import './GitGraph.css'
 
 // --------------------------- layout ---------------------------
 
-const LANE_W = 18 // ширина однієї «рейки» (px)
-const ROW_H = 28 // висота рядка (px)
-const RADIUS = 5 // радіус кружка коміту
-const RAIL_STROKE = 1.5 // товщина рейок та зʼєднань
+const LANE_W = 22 // ширина однієї «рейки» (px)
+const ROW_H = 30 // висота рядка (px)
+const RADIUS = 7 // радіус кружка коміту
+const RAIL_STROKE = 1.75 // товщина рейок та зʼєднань
+const CIRCLE_STROKE = 2 // товщина обводки кружка
 
 // Палітра lane-ів: cyan, magenta, green, yellow, blue, red — повторюється
 // по колу для глибокого графа.
@@ -38,65 +39,82 @@ interface CommitLayout {
 }
 
 /**
- * Lane-assignment у дусі `git log --graph`:
+ * Lane-assignment за принципом «one branch — one lane».
  *
- * Йдемо по комітах у тому порядку, як їх віддає backend (newer-first з
- * `git log --all`). У `activeLanes[i]` тримаємо sha коміту, на який «чекає»
- * lane знизу: коли його зустрінемо — займаємо lane і резервуємо parents
- * у вільних/успадкованих lane-ах.
+ * Кроки:
+ *  1. Для комітів з decoration (n.branch != null) одразу запамʼятовуємо
+ *     їхню гілку.
+ *  2. Для решти — успадковуємо гілку від найближчого нащадка (newer-first
+ *     порядок з git log гарантує, що нащадок уже мав шанс отримати гілку
+ *     перш ніж ми дійшли до батька).
+ *  3. main/master завжди отримують lane 0; інші гілки — наступні номери
+ *     у порядку появи. Так feature-branch візуально відходить праворуч,
+ *     навіть якщо історія по факту лінійна.
  *
- * Спрощення: перший parent — спадкоємець lane-а коміту (continuation),
- * інші parents (merges) — займають вільні lane-и зліва направо. Це покриває
- * лінійну історію, гілкування й merge — типовий випадок навчальних
- * сценаріїв. Складніші історії (octopus, criss-cross) можуть візуально
- * перетинатися — це OK для MVP.
+ * Це покриває звичні навчальні сценарії: лінійка, гілка від main,
+ * merge назад. Складніші історії (octopus, criss-cross) можуть
+ * візуально перетинатися — це OK для MVP.
  */
 function computeLayout(graph: GraphPayload): CommitLayout {
-  const positioned: PositionedCommit[] = []
-  const activeLanes: (string | null)[] = []
+  const nodes = graph.nodes
 
-  const claim = (sha: string): number => {
-    const idx = activeLanes.findIndex((o) => o === sha)
-    if (idx !== -1) return idx
-    const free = activeLanes.findIndex((o) => o === null)
-    if (free !== -1) return free
-    activeLanes.push(null)
-    return activeLanes.length - 1
+  // 1. children map (parent sha → array of child sha)
+  const childrenOf = new Map<string, string[]>()
+  for (const n of nodes) {
+    for (const p of n.parents) {
+      const arr = childrenOf.get(p)
+      if (arr) arr.push(n.id)
+      else childrenOf.set(p, [n.id])
+    }
   }
 
-  for (const node of graph.nodes) {
-    const lane = claim(node.id)
-    activeLanes[lane] = null
-
-    // Резервуємо lane-и для parents. Перший — наслідує мою.
-    for (let i = 0; i < node.parents.length; i += 1) {
-      const p = node.parents[i]
-      if (i === 0) {
-        activeLanes[lane] = p
-      } else {
-        const free = activeLanes.findIndex((o) => o === null)
-        if (free !== -1) {
-          activeLanes[free] = p
-        } else {
-          activeLanes.push(p)
-        }
+  // 2. визначаємо гілку для кожного коміту
+  const commitBranch = new Map<string, string>()
+  for (const n of nodes) {
+    if (n.branch) commitBranch.set(n.id, n.branch)
+  }
+  // Successor-inheritance: nodes йдуть newer-first → нащадок уже processed.
+  for (const n of nodes) {
+    if (commitBranch.has(n.id)) continue
+    const kids = childrenOf.get(n.id) ?? []
+    for (const cid of kids) {
+      const cb = commitBranch.get(cid)
+      if (cb) {
+        commitBranch.set(n.id, cb)
+        break
       }
     }
-
-    positioned.push({
-      id: node.id,
-      label: node.label ?? '',
-      branch: node.branch,
-      author: node.author,
-      parents: [...node.parents],
-      lane,
-      y: positioned.length,
-    })
   }
+
+  // 3. lane number за гілкою (main/master → 0)
+  const branchLane = new Map<string, number>([
+    ['main', 0],
+    ['master', 0],
+  ])
+  let nextLane = 1
+  const laneOf = (branch: string | undefined): number => {
+    if (!branch) return 0
+    const cached = branchLane.get(branch)
+    if (cached !== undefined) return cached
+    const lane = nextLane
+    branchLane.set(branch, lane)
+    nextLane += 1
+    return lane
+  }
+
+  const positioned: PositionedCommit[] = nodes.map((n, i) => ({
+    id: n.id,
+    label: n.label ?? '',
+    branch: n.branch,
+    author: n.author,
+    parents: [...n.parents],
+    lane: laneOf(commitBranch.get(n.id)),
+    y: i,
+  }))
 
   return {
     commits: positioned,
-    numLanes: Math.max(1, activeLanes.length),
+    numLanes: Math.max(1, nextLane),
   }
 }
 
@@ -172,16 +190,17 @@ export function GitGraph() {
               )
             }),
           )}
-          {/* circles */}
+          {/* circles — полі всередині (fill = колір фону панелі), щоб
+              кружок виглядав як «вузол» на ребрі, а не як суцільна крапка. */}
           {layout.commits.map((c) => (
             <circle
               key={c.id}
               cx={c.lane * LANE_W + LANE_W / 2}
               cy={c.y * ROW_H + ROW_H / 2}
               r={RADIUS}
-              fill={laneColor(c.lane)}
-              stroke="#0b0b0f"
-              strokeWidth={2}
+              fill="var(--bg-elevated)"
+              stroke={laneColor(c.lane)}
+              strokeWidth={CIRCLE_STROKE}
             />
           ))}
         </svg>
