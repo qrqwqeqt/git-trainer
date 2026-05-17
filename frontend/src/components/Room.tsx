@@ -76,7 +76,13 @@ export function Room({ session, onSessionChange }: RoomProps) {
     <div className="room">
       <header className="room__header">
         <div className="room__brand">
-          <span className="room__logo">⎇</span>
+          <img
+            src="/logo.svg"
+            alt="Git Trainer"
+            className="room__logo"
+            width={24}
+            height={24}
+          />
           <strong>Git Trainer</strong>
         </div>
 

@@ -26,9 +26,9 @@
 }
 
 .room__logo {
-  font-size: 1.2rem;
-  line-height: 1;
-  color: var(--accent-magenta);
+  display: block;
+  width: 24px;
+  height: 24px;
 }
 
 .room__inputs {
