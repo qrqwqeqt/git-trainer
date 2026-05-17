@@ -66,3 +66,29 @@ export function buildRoomWsUrl(session: SessionInfo): string {
   url.searchParams.set('username', session.username)
   return url.toString()
 }
+
+/** Зберегти username (для guest) — щоб refresh не давав нове імʼя. */
+export function saveUsername(username: string): void {
+  if (username.trim()) {
+    localStorage.setItem(GUEST_NAME_KEY, username.trim())
+  }
+}
+
+/** Записати поточний room/username у URL — щоб посилання було share-able.
+ *  Використовуємо replaceState, бо це не «нова сторінка», а зміна стану.
+ */
+export function updateUrlForSession(session: SessionInfo): void {
+  const url = new URL(window.location.href)
+  url.searchParams.set('room', session.roomId)
+  url.searchParams.set('name', session.username)
+  window.history.replaceState(null, '', url.toString())
+}
+
+/** Простий sanitizer для room slug та username: тільки latin/digits/-/_. */
+export function sanitizeSlug(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 64)
+}
+
+export function sanitizeUsername(raw: string): string {
+  return raw.trim().slice(0, 32) || 'guest'
+}

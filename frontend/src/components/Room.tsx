@@ -1,7 +1,20 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from 'react'
+// useEffect лишається у Room для reset() при зміні roomId
 
 import { useWebSocket, type ConnectionState } from '../hooks/useWebSocket'
-import { buildRoomWsUrl, type SessionInfo } from '../lib/session'
+import { resetSandbox } from '../lib/api'
+import {
+  buildRoomWsUrl,
+  sanitizeSlug,
+  sanitizeUsername,
+  type SessionInfo,
+} from '../lib/session'
 import { useGitStore } from '../store/gitStore'
 import { GitGraph } from './GitGraph'
 import { Terminal } from './Terminal'
@@ -9,16 +22,17 @@ import './Room.css'
 
 export interface RoomProps {
   session: SessionInfo
+  onSessionChange: (next: SessionInfo) => void
 }
 
 const STATE_LABEL: Record<ConnectionState, string> = {
-  connecting: '🟡 підключаюсь',
-  open: '🟢 онлайн',
-  closed: '🔴 відключено',
-  error: '🔴 помилка',
+  connecting: 'підключаюсь',
+  open: 'онлайн',
+  closed: 'відключено',
+  error: 'помилка',
 }
 
-export function Room({ session }: RoomProps) {
+export function Room({ session, onSessionChange }: RoomProps) {
   const wsUrl = useMemo(() => buildRoomWsUrl(session), [session])
   const applyMessage = useGitStore((s) => s.applyMessage)
   const reset = useGitStore((s) => s.reset)
@@ -42,6 +56,20 @@ export function Room({ session }: RoomProps) {
     [sendMessage],
   )
 
+  const [resetting, setResetting] = useState(false)
+  const handleReset = useCallback(async () => {
+    if (resetting) return
+    setResetting(true)
+    try {
+      await resetSandbox(session.roomId)
+      reset()
+    } catch (err) {
+      console.error('reset failed', err)
+    } finally {
+      setResetting(false)
+    }
+  }, [resetting, session.roomId, reset])
+
   const userList = Object.values(users)
 
   return (
@@ -51,14 +79,30 @@ export function Room({ session }: RoomProps) {
           <span className="room__logo">⎇</span>
           <strong>Git Trainer</strong>
         </div>
-        <div className="room__meta">
-          <span>
-            кімната: <code>{session.roomId}</code>
-          </span>
-          <span>
-            ти: <code>{session.username}</code>
-          </span>
+
+        <div className="room__inputs">
+          <EditableField
+            // key — щоб зміна сесії ззовні (commit) перестворила input
+            // зі свіжим draft-станом, без setState-in-effect.
+            key={`room-${session.roomId}`}
+            label="кімната"
+            value={session.roomId}
+            sanitize={sanitizeSlug}
+            onCommit={(v) =>
+              onSessionChange({ ...session, roomId: v || 'demo' })
+            }
+          />
+          <EditableField
+            key={`user-${session.username}`}
+            label="ти"
+            value={session.username}
+            sanitize={sanitizeUsername}
+            onCommit={(v) =>
+              onSessionChange({ ...session, username: v || 'guest' })
+            }
+          />
         </div>
+
         <div className="room__users" title="Учасники в кімнаті">
           {userList.length === 0 ? (
             <span className="room__users-empty">— нікого —</span>
@@ -70,6 +114,17 @@ export function Room({ session }: RoomProps) {
             ))
           )}
         </div>
+
+        <button
+          type="button"
+          className="room__reset"
+          onClick={handleReset}
+          disabled={resetting}
+          title="Скинути sandbox-контейнер кімнати (видалити репозиторій)"
+        >
+          {resetting ? 'скидаю…' : '↻ reset'}
+        </button>
+
         <span className={`room__state room__state--${state}`}>
           {STATE_LABEL[state]}
         </span>
@@ -90,5 +145,53 @@ export function Room({ session }: RoomProps) {
         </section>
       </main>
     </div>
+  )
+}
+
+// --------------------------- editable field ---------------------------
+
+interface EditableFieldProps {
+  label: string
+  value: string
+  sanitize: (raw: string) => string
+  onCommit: (next: string) => void
+}
+
+function EditableField({
+  label,
+  value,
+  sanitize,
+  onCommit,
+}: EditableFieldProps) {
+  // Local-only draft. Зміни value ззовні підхопить key-remount у Room.
+  const [draft, setDraft] = useState(value)
+
+  const commit = () => {
+    const next = sanitize(draft)
+    if (next && next !== value) onCommit(next)
+    else setDraft(value) // повертаємо, якщо ввели сміття
+  }
+
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.currentTarget.blur()
+    } else if (e.key === 'Escape') {
+      setDraft(value)
+      e.currentTarget.blur()
+    }
+  }
+
+  return (
+    <label className="room__field">
+      <span className="room__field-label">{label}:</span>
+      <input
+        className="room__field-input"
+        value={draft}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+      />
+    </label>
   )
 }

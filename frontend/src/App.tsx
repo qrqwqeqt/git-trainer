@@ -1,13 +1,23 @@
-import { useMemo } from 'react'
+import { useCallback, useState } from 'react'
 
 import { Room } from './components/Room'
-import { readSessionFromUrl } from './lib/session'
+import {
+  readSessionFromUrl,
+  saveUsername,
+  updateUrlForSession,
+  type SessionInfo,
+} from './lib/session'
 
 function App() {
-  // Сесія читається один раз з URL/localStorage; зміна ?room=... буде
-  // підхоплена тільки при reload — для MVP цього достатньо.
-  const session = useMemo(() => readSessionFromUrl(), [])
-  return <Room session={session} />
+  const [session, setSession] = useState<SessionInfo>(() => readSessionFromUrl())
+
+  const handleSessionChange = useCallback((next: SessionInfo) => {
+    saveUsername(next.username)
+    updateUrlForSession(next)
+    setSession(next)
+  }, [])
+
+  return <Room session={session} onSessionChange={handleSessionChange} />
 }
 
 export default App
