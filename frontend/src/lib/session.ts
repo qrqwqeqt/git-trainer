@@ -2,6 +2,13 @@
  * Утиліти для початкової сесії: підбір room/user/username з URL і
  * формування WebSocket URL. Серверний endpoint:
  *   GET /ws/{room_id}?user_id=...&username=...
+ *
+ * Архітектура:
+ *   - URL — джерело правди для roomId та username (share-able).
+ *   - localStorage — кеш guest-id, останнього username і людських
+ *     назв кімнат (room labels). На бек не передається.
+ *   - App.tsx вирішує, чи показувати Landing або одразу Room
+ *     на основі readUrlPrefill() + getStoredUsername().
  */
 
 const WS_BASE: string =
@@ -9,8 +16,10 @@ const WS_BASE: string =
 
 const GUEST_ID_KEY = 'git-trainer.guestId'
 const GUEST_NAME_KEY = 'git-trainer.guestName'
+const ROOM_LABELS_KEY = 'git-trainer.roomLabels'
 
 const ID_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789'
+const ROOM_SUFFIX_LEN = 4
 
 function randomId(len = 6): string {
   let out = ''
@@ -26,34 +35,37 @@ export interface SessionInfo {
   username: string
 }
 
-/**
- * Дістає room/user/username з URL-параметрів (?room=, ?user=, ?name=);
- * відсутні значення підтягуються з localStorage або генеруються вперше.
- * guest-id зберігається у localStorage, щоб refresh не робив тебе іншим
- * юзером (інакше backend бачитиме нескінченний потік USER_JOINED).
- */
-export function readSessionFromUrl(): SessionInfo {
+export interface UrlPrefill {
+  roomId: string | null
+  username: string | null
+}
+
+/** Читає сирі ?room= і ?name= з URL без жодних fallback-ів. */
+export function readUrlPrefill(): UrlPrefill {
   const params = new URLSearchParams(window.location.search)
+  return {
+    roomId: params.get('room')?.trim() || null,
+    username: params.get('name')?.trim() || null,
+  }
+}
 
-  const roomId = params.get('room')?.trim() || 'demo'
+/** localStorage username (null якщо ще не зберігали). */
+export function getStoredUsername(): string | null {
+  const v = localStorage.getItem(GUEST_NAME_KEY)
+  return v && v.trim() ? v.trim() : null
+}
 
-  let userId = params.get('user')?.trim() || ''
+export function hasStoredUsername(): boolean {
+  return getStoredUsername() !== null
+}
+
+/** Збирає повний SessionInfo: roomId/username задані, userId — з кешу або новий. */
+export function buildSession(roomId: string, username: string): SessionInfo {
+  let userId = localStorage.getItem(GUEST_ID_KEY) ?? ''
   if (!userId) {
-    userId = localStorage.getItem(GUEST_ID_KEY) ?? ''
-    if (!userId) {
-      userId = `guest-${randomId(6)}`
-      localStorage.setItem(GUEST_ID_KEY, userId)
-    }
+    userId = `guest-${randomId(6)}`
+    localStorage.setItem(GUEST_ID_KEY, userId)
   }
-
-  let username = params.get('name')?.trim() || ''
-  if (!username) {
-    username = localStorage.getItem(GUEST_NAME_KEY) ?? userId
-    if (!localStorage.getItem(GUEST_NAME_KEY)) {
-      localStorage.setItem(GUEST_NAME_KEY, username)
-    }
-  }
-
   return { roomId, userId, username }
 }
 
@@ -91,4 +103,44 @@ export function sanitizeSlug(raw: string): string {
 
 export function sanitizeUsername(raw: string): string {
   return raw.trim().slice(0, 32) || 'guest'
+}
+
+/** Згенерувати roomId з людської назви: slug + випадковий суфікс,
+ *  щоб «react basics» від двох викладачів не злилися в одну кімнату.
+ */
+export function generateRoomId(displayName: string): string {
+  const slug = sanitizeSlug(displayName)
+  const suffix = randomId(ROOM_SUFFIX_LEN)
+  const base = slug || 'room'
+  return `${base}-${suffix}`.slice(0, 64)
+}
+
+// ---------------- Room labels (людська назва ↔ roomId) ----------------
+
+function readRoomLabels(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(ROOM_LABELS_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+export function saveRoomLabel(roomId: string, label: string): void {
+  const labels = readRoomLabels()
+  labels[roomId] = label.trim().slice(0, 64)
+  try {
+    localStorage.setItem(ROOM_LABELS_KEY, JSON.stringify(labels))
+  } catch {
+    /* приватний режим або quota — мовчки ігноруємо, не критично */
+  }
+}
+
+export function getRoomLabel(roomId: string): string | null {
+  return readRoomLabels()[roomId] ?? null
 }
