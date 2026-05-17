@@ -95,6 +95,32 @@
   cursor: not-allowed;
 }
 
+.room__share {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  background: var(--bg-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.7rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.room__share:hover {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.room__share--copied,
+.room__share--copied:hover {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+}
+
 .room__users {
   display: flex;
   gap: 0.35rem;

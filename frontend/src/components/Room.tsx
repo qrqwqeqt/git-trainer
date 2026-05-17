@@ -70,6 +70,20 @@ export function Room({ session, onSessionChange }: RoomProps) {
     }
   }, [resetting, session.roomId, reset])
 
+  const [copied, setCopied] = useState(false)
+  const handleCopyLink = useCallback(async () => {
+    // Копіюємо тільки room — не username. Так одержувач відкриває
+    // лендинг і вводить свій нік, а не приходить як «ти».
+    const link = `${window.location.origin}/?room=${encodeURIComponent(session.roomId)}`
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch (err) {
+      console.error('copy failed', err)
+    }
+  }, [session.roomId])
+
   const userList = Object.values(users)
 
   return (
@@ -123,6 +137,16 @@ export function Room({ session, onSessionChange }: RoomProps) {
 
         <button
           type="button"
+          className={`room__share${copied ? ' room__share--copied' : ''}`}
+          onClick={handleCopyLink}
+          title="Скопіювати посилання на кімнату"
+        >
+          {copied ? <CheckIcon /> : <LinkIcon />}
+          <span>{copied ? 'скопійовано' : 'копіювати лінк'}</span>
+        </button>
+
+        <button
+          type="button"
           className="room__reset"
           onClick={handleReset}
           disabled={resetting}
@@ -151,6 +175,45 @@ export function Room({ session, onSessionChange }: RoomProps) {
         </section>
       </main>
     </div>
+  )
+}
+
+// --------------------------- icons ---------------------------
+
+function LinkIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M10 14a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+      <path d="M14 10a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={14}
+      height={14}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M5 12.5l4.5 4.5L19 7" />
+    </svg>
   )
 }
 
