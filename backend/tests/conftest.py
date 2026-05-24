@@ -17,6 +17,10 @@ from pathlib import Path
 _db_dir = Path(tempfile.mkdtemp(prefix="git-trainer-test-"))
 _db_path = _db_dir / "test.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path.as_posix()}"
+# Аудит пише в БД з WS-хендлера; під TestClient (portal-loop) це загострює
+# проблему "Event loop is closed". Логіку аудиту перевіряємо напряму в
+# test_audit.py, тож у WS-смоук-тестах persistence вимикаємо.
+os.environ["AUDIT_ENABLED"] = "false"
 
 
 def _cleanup_tmp_db() -> None:

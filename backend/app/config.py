@@ -50,6 +50,20 @@ class Settings(BaseSettings):
     sandbox_image: str = "git-trainer-sandbox:latest"
     max_rooms: int = 50
 
+    # --- Rate limiting (захист від флуду команд) ---
+    rate_limit_max: int = Field(
+        default=30, description="Макс. git-команд за вікно на (кімната, юзер)."
+    )
+    rate_limit_window_s: float = Field(
+        default=10.0, description="Розмір вікна rate-limiter у секундах."
+    )
+
+    # --- Audit ---
+    audit_enabled: bool = Field(
+        default=True,
+        description="Чи писати git-команди в аудит-лог БД (вимикається в тестах).",
+    )
+
     # --- CORS ---
     cors_origins: list[str] = Field(
         default_factory=lambda: [

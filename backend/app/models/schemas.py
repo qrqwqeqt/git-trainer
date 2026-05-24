@@ -118,6 +118,15 @@ class SessionRead(BaseModel):
     disconnected_at: datetime | None = None
 
 
+class AuditEntry(BaseModel):
+    """Запис аудит-логу git-команди (для перегляду «хто що робив»)."""
+
+    username: str
+    command: str
+    exit_code: int
+    created_at: datetime
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     version: str

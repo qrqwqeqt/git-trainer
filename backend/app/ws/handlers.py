@@ -14,20 +14,30 @@ from fastapi import WebSocket
 
 from uuid import UUID
 
+from app.config import get_settings
 from app.db import get_sessionmaker
 from app.db.repository import (
     create_session_row,
     get_or_create_room,
     get_or_create_user,
+    log_command,
     mark_session_disconnected,
 )
 from app.docker import sandbox_manager
 from app.docker.sandbox import SandboxError
 from app.git.executor import GitCommandError, GitCommandExecutor
 from app.models.schemas import WSMessage, WSMessageType
+from app.ratelimit import RateLimiter
 from app.ws.manager import connection_manager
 
 logger = logging.getLogger(__name__)
+
+# Rate-limiter git-команд (захист від флуду). Налаштування — з config.
+_settings = get_settings()
+command_rate_limiter = RateLimiter(
+    max_events=_settings.rate_limit_max,
+    window_s=_settings.rate_limit_window_s,
+)
 
 
 async def on_user_joined(
@@ -162,6 +172,20 @@ async def on_git_command(
         extra={"room_id": room_id, "user_id": user_id, "command": command},
     )
 
+    # Rate-limit: захист від флуду команд (DoS). Перевищення — приватний ERROR.
+    if not command_rate_limiter.allow(room_id, user_id):
+        logger.warning(
+            "ws.git_command.rate_limited",
+            extra={"room_id": room_id, "user_id": user_id},
+        )
+        await _send_error(
+            sender,
+            "rate_limited",
+            f"max {_settings.rate_limit_max} команд за "
+            f"{_settings.rate_limit_window_s:.0f}с",
+        )
+        return
+
     try:
         await sandbox_manager.start(room_id)
     except SandboxError as exc:
@@ -200,6 +224,26 @@ async def on_git_command(
             graph=outcome.graph,
         )
         await connection_manager.broadcast(room_id, graph_msg)
+
+    # Аудит-лог (best-effort): не валимо WS-стрім, якщо БД недоступна.
+    if not _settings.audit_enabled:
+        return
+    try:
+        sm = get_sessionmaker()
+        async with sm() as db:
+            await log_command(
+                db,
+                room_slug=room_id,
+                username=username,
+                command=command,
+                exit_code=outcome.exit_code,
+            )
+            await db.commit()
+    except Exception:  # noqa: BLE001 — аудит не повинен ламати основний потік
+        logger.exception(
+            "ws.git_command.audit_failed",
+            extra={"room_id": room_id, "user_id": user_id},
+        )
 
 
 async def on_unknown_message(

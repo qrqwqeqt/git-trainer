@@ -11,10 +11,18 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -78,3 +86,27 @@ class Session(Base):
 
     room: Mapped[Room] = relationship(back_populates="sessions")
     user: Mapped[User] = relationship(back_populates="sessions")
+
+
+class CommandAudit(Base):
+    """Аудит-лог git-команд: хто, що, коли, з яким результатом.
+
+    Навмисно decoupled від rooms/users (зберігаємо рядкові room_slug/username),
+    щоб запис аудиту був дешевим (без зайвих lookup-ів) і пережив видалення
+    кімнати. Це «логи» для підрозділу ПЗ «захист даних».
+    """
+
+    __tablename__ = "command_audit"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    room_slug: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    command: Mapped[str] = mapped_column(Text, nullable=False)
+    exit_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Python-side default з мікросекундною точністю — щоб «новіші першими»
+    # працювало детерміновано навіть на SQLite (func.now() там посекундний).
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

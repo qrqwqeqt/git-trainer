@@ -8,11 +8,21 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import get_session
+from app.db.repository import list_audit
 from app.docker import sandbox_manager
 from app.docker.sandbox import SandboxError
-from app.models.schemas import GraphPayload, RoomCreate, RoomRead, WSMessage, WSMessageType
+from app.models.schemas import (
+    AuditEntry,
+    GraphPayload,
+    RoomCreate,
+    RoomRead,
+    WSMessage,
+    WSMessageType,
+)
 from app.ws.manager import connection_manager
 
 logger = logging.getLogger(__name__)
@@ -82,3 +92,22 @@ async def reset_sandbox(slug: str) -> Response:
     await connection_manager.broadcast(slug, empty)
     logger.info("rooms.reset.ok", extra={"room": slug})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{slug}/audit", response_model=list[AuditEntry])
+async def get_room_audit(
+    slug: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: AsyncSession = Depends(get_session),
+) -> list[AuditEntry]:
+    """Аудит-лог git-команд кімнати (новіші — першими). Для «хто що робив»."""
+    rows = await list_audit(db, room_slug=slug, limit=limit)
+    return [
+        AuditEntry(
+            username=r.username,
+            command=r.command,
+            exit_code=r.exit_code,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]

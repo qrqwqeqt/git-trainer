@@ -9,10 +9,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import Room, Session as SessionRow, User
+from app.models.db import CommandAudit, Room, Session as SessionRow, User
 
 
 async def get_or_create_user(session: AsyncSession, username: str) -> User:
@@ -75,3 +75,39 @@ async def mark_session_disconnected(
     if row is None or row.disconnected_at is not None:
         return
     row.disconnected_at = datetime.now(timezone.utc)
+
+
+async def log_command(
+    session: AsyncSession,
+    *,
+    room_slug: str,
+    username: str,
+    command: str,
+    exit_code: int,
+) -> None:
+    """Записати виконану git-команду в аудит-лог."""
+    session.add(
+        CommandAudit(
+            room_slug=room_slug,
+            username=username,
+            command=command,
+            exit_code=exit_code,
+        )
+    )
+    await session.flush()
+
+
+async def list_audit(
+    session: AsyncSession,
+    *,
+    room_slug: str,
+    limit: int = 100,
+) -> list[CommandAudit]:
+    """Останні записи аудиту для кімнати (новіші — першими)."""
+    stmt = (
+        select(CommandAudit)
+        .where(CommandAudit.room_slug == room_slug)
+        .order_by(desc(CommandAudit.created_at))
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
