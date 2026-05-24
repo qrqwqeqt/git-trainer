@@ -17,10 +17,6 @@ from pathlib import Path
 _db_dir = Path(tempfile.mkdtemp(prefix="git-trainer-test-"))
 _db_path = _db_dir / "test.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path.as_posix()}"
-# Аудит пише в БД з WS-хендлера; під TestClient (portal-loop) це загострює
-# проблему "Event loop is closed". Логіку аудиту перевіряємо напряму в
-# test_audit.py, тож у WS-смоук-тестах persistence вимикаємо.
-os.environ["AUDIT_ENABLED"] = "false"
 
 
 def _cleanup_tmp_db() -> None:
@@ -43,6 +39,20 @@ from app.main import app as fastapi_app  # noqa: E402
 @pytest.fixture()
 def app():
     return fastapi_app
+
+
+@pytest.fixture(autouse=True)
+def _disable_ws_db_persistence():
+    """WS-смоук-тести (TestClient) не повинні писати в БД — portal-loop
+    конфліктує з aiosqlite teardown. Тести, що перевіряють persistence
+    напряму (test_db_persistence), вмикають це назад власною фікстурою.
+    """
+    import app.ws.handlers as handlers
+
+    prev = handlers.db_persistence_enabled
+    handlers.db_persistence_enabled = False
+    yield
+    handlers.db_persistence_enabled = prev
 
 
 @pytest.fixture()

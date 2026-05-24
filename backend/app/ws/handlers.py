@@ -39,6 +39,12 @@ command_rate_limiter = RateLimiter(
     window_s=_settings.rate_limit_window_s,
 )
 
+# Best-effort persistence (Session-рядки + аудит) у БД. Вимикається в WS-смоук-
+# тестах: під TestClient (anyio portal-loop) async-engine конфліктує з aiosqlite
+# на teardown ("Event loop is closed"). Саму persistence/audit-логіку покривають
+# прямі тести (test_db_persistence, test_audit).
+db_persistence_enabled = True
+
 
 async def on_user_joined(
     room_id: str,
@@ -66,21 +72,22 @@ async def on_user_joined(
     logger.info("ws.user_joined", extra={"room_id": room_id, "user_id": user_id})
 
     db_session_id: UUID | None = None
-    try:
-        sm = get_sessionmaker()
-        async with sm() as db:
-            user = await get_or_create_user(db, username=username)
-            room = await get_or_create_room(
-                db, slug=room_id, owner_id=user.id, display_name=room_id
+    if db_persistence_enabled:
+        try:
+            sm = get_sessionmaker()
+            async with sm() as db:
+                user = await get_or_create_user(db, username=username)
+                room = await get_or_create_room(
+                    db, slug=room_id, owner_id=user.id, display_name=room_id
+                )
+                row = await create_session_row(db, room_id=room.id, user_id=user.id)
+                await db.commit()
+                db_session_id = row.id
+        except Exception:  # noqa: BLE001 — persistence не повинна ламати WS-стрім
+            logger.exception(
+                "ws.user_joined.persist_failed",
+                extra={"room_id": room_id, "user_id": user_id},
             )
-            row = await create_session_row(db, room_id=room.id, user_id=user.id)
-            await db.commit()
-            db_session_id = row.id
-    except Exception:  # noqa: BLE001 — persistence не повинна ламати WS-стрім
-        logger.exception(
-            "ws.user_joined.persist_failed",
-            extra={"room_id": room_id, "user_id": user_id},
-        )
 
     if sender is not None:
         await _maybe_send_snapshot(room_id, user_id, sender)
@@ -226,7 +233,7 @@ async def on_git_command(
         await connection_manager.broadcast(room_id, graph_msg)
 
     # Аудит-лог (best-effort): не валимо WS-стрім, якщо БД недоступна.
-    if not _settings.audit_enabled:
+    if not db_persistence_enabled:
         return
     try:
         sm = get_sessionmaker()

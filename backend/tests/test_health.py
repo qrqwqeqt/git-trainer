@@ -11,7 +11,14 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from app.auth import create_token
 from app.docker.sandbox import ExecResult
+
+
+def _ws_url(room: str, user_id: str, username: str) -> str:
+    """URL WS-з'єднання з підписаним токеном (особистість тепер у токені)."""
+    token = create_token(user_id, username, room)
+    return f"/ws/{room}?token={token}"
 
 
 @pytest.mark.asyncio
@@ -38,8 +45,8 @@ async def test_root_endpoint(app) -> None:
 def test_websocket_user_joined_broadcast(app) -> None:
     """Два клієнти в одній кімнаті — другий має побачити USER_JOINED."""
     client = TestClient(app)
-    url_a = "/ws/test-room?user_id=alice&username=Alice"
-    url_b = "/ws/test-room?user_id=bob&username=Bob"
+    url_a = _ws_url("test-room", "alice", "Alice")
+    url_b = _ws_url("test-room", "bob", "Bob")
     with client.websocket_connect(url_a) as ws_a:
         # Перший USER_JOINED для Alice — приходить самій Alice (broadcast шле всім).
         first = ws_a.receive_json()
@@ -61,7 +68,7 @@ def test_websocket_user_joined_broadcast(app) -> None:
 def test_websocket_git_status_no_graph_update(app, fake_sandbox) -> None:
     """git status — read-only: GIT_EVENT приходить, GRAPH_UPDATE — ні."""
     client = TestClient(app)
-    with client.websocket_connect("/ws/r1?user_id=u1&username=U1") as ws:
+    with client.websocket_connect(_ws_url("r1", "u1", "U1")) as ws:
         _ = ws.receive_json()  # USER_JOINED для самого себе
         ws.send_json(
             {
@@ -92,7 +99,7 @@ def test_websocket_git_commit_triggers_graph_update(app, fake_sandbox) -> None:
         ),
     ]
     client = TestClient(app)
-    with client.websocket_connect("/ws/r2?user_id=u1&username=U1") as ws:
+    with client.websocket_connect(_ws_url("r2", "u1", "U1")) as ws:
         _ = ws.receive_json()  # USER_JOINED
         ws.send_json(
             {
@@ -128,7 +135,7 @@ def test_websocket_snapshot_sent_to_late_joiner(app, fake_sandbox) -> None:
     )
 
     client = TestClient(app)
-    with client.websocket_connect("/ws/r-snap?user_id=late&username=Late") as ws:
+    with client.websocket_connect(_ws_url("r-snap", "late", "Late")) as ws:
         first = ws.receive_json()
         assert first["type"] == "USER_JOINED"
         snap = ws.receive_json()
@@ -142,7 +149,7 @@ def test_websocket_no_snapshot_when_sandbox_absent(app, fake_sandbox) -> None:
     fake_sandbox.get.return_value = None
 
     client = TestClient(app)
-    with client.websocket_connect("/ws/r-empty?user_id=first&username=First") as ws:
+    with client.websocket_connect(_ws_url("r-empty", "first", "First")) as ws:
         first = ws.receive_json()
         assert first["type"] == "USER_JOINED"
         # Більше нічого приходити не має (snapshot пропускається).
@@ -153,7 +160,7 @@ def test_websocket_no_snapshot_when_sandbox_absent(app, fake_sandbox) -> None:
 def test_websocket_invalid_git_command_replies_error(app, fake_sandbox) -> None:
     """Невалідна команда (поза whitelist) → ERROR лише відправнику."""
     client = TestClient(app)
-    with client.websocket_connect("/ws/r3?user_id=u1&username=U1") as ws:
+    with client.websocket_connect(_ws_url("r3", "u1", "U1")) as ws:
         _ = ws.receive_json()  # USER_JOINED
         ws.send_json(
             {
@@ -168,10 +175,36 @@ def test_websocket_invalid_git_command_replies_error(app, fake_sandbox) -> None:
     fake_sandbox.exec.assert_not_called()
 
 
+def test_websocket_rejects_invalid_token(app) -> None:
+    """Невалідний токен → сервер закриває рукостискання (без USER_JOINED)."""
+    from starlette.websockets import WebSocketDisconnect
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/r1?token=bogus.sig") as ws:
+            ws.receive_json()
+
+
+def test_auth_session_issues_token(app) -> None:
+    """POST /auth/session видає токен, придатний для тієї ж кімнати."""
+    from app.auth import verify_token
+
+    client = TestClient(app)
+    resp = client.post(
+        "/auth/session", json={"room": "r-auth", "username": "Dzhe"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["room"] == "r-auth"
+    assert body["username"] == "Dzhe"
+    data = verify_token(body["token"], expected_room="r-auth")
+    assert data.username == "Dzhe"
+
+
 def test_websocket_unknown_message(app) -> None:
     """Невідомий тип — сервер відповідає ERROR безпосередньо відправнику."""
     client = TestClient(app)
-    with client.websocket_connect("/ws/r2?user_id=u2&username=U2") as ws:
+    with client.websocket_connect(_ws_url("r2", "u2", "U2")) as ws:
         _ = ws.receive_json()  # USER_JOINED
         ws.send_json({"type": "WAT", "payload": {}})
         err = ws.receive_json()

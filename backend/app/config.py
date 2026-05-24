@@ -58,12 +58,6 @@ class Settings(BaseSettings):
         default=10.0, description="Розмір вікна rate-limiter у секундах."
     )
 
-    # --- Audit ---
-    audit_enabled: bool = Field(
-        default=True,
-        description="Чи писати git-команди в аудит-лог БД (вимикається в тестах).",
-    )
-
     # --- CORS ---
     cors_origins: list[str] = Field(
         default_factory=lambda: [

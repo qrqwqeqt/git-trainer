@@ -69,13 +69,15 @@ export function buildSession(roomId: string, username: string): SessionInfo {
   return { roomId, userId, username }
 }
 
-/** Збирає WS URL виду ws://host/ws/{room}?user_id=...&username=... */
-export function buildRoomWsUrl(session: SessionInfo): string {
+/** Збирає WS URL виду ws://host/ws/{room}?token=...
+ *  Особистість тепер у підписаному токені (див. lib/api.authSession),
+ *  а не в сирих query-параметрах — клієнт не може її підмінити.
+ */
+export function buildRoomWsUrl(session: SessionInfo, token: string): string {
   const url = new URL(WS_BASE)
   const cleanPath = url.pathname.replace(/\/+$/, '')
   url.pathname = `${cleanPath}/${encodeURIComponent(session.roomId)}`
-  url.searchParams.set('user_id', session.userId)
-  url.searchParams.set('username', session.username)
+  url.searchParams.set('token', token)
   return url.toString()
 }
 

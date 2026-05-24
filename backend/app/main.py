@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from fastapi import (
@@ -22,11 +24,14 @@ from starlette.websockets import WebSocketState
 
 from app import __version__
 from app.api import rooms_router, sessions_router, users_router
+from app.auth import AuthError, create_token, verify_token
 from app.config import Settings, get_settings
 from app.db import close_db, init_db
 from app.docker.sandbox import SandboxError, sandbox_manager
 from app.metrics import git_metrics
 from app.models.schemas import (
+    AuthRequest,
+    AuthResponse,
     HealthResponse,
     LatencyStats,
     MetricsResponse,
@@ -171,14 +176,42 @@ def create_app() -> FastAPI:
             per_room_mib=per_room_mib,
         )
 
-    # WebSocket endpoint: /ws/{room_id}?user_id=...&username=...
+    # Auth: видати підписаний токен сесії для кімнати (авторизація).
+    @app.post("/auth/session", response_model=AuthResponse, tags=["auth"])
+    async def auth_session(req: AuthRequest) -> AuthResponse:
+        room = req.room.strip()
+        username = (req.username.strip() or "guest")[:32]
+        user_id = (req.user_id or "").strip() or f"guest-{secrets.token_hex(4)}"
+        token = create_token(user_id, username, room)
+        data = verify_token(token, expected_room=room)
+        return AuthResponse(
+            token=token,
+            user_id=user_id,
+            username=username,
+            room=room,
+            expires_at=datetime.fromtimestamp(data.exp, tz=timezone.utc),
+        )
+
+    # WebSocket endpoint: /ws/{room_id}?token=...  (особистість — із токена)
     @app.websocket("/ws/{room_id}")
     async def websocket_endpoint(
         websocket: WebSocket,
         room_id: str,
-        user_id: str = Query(..., min_length=1),
-        username: str = Query(..., min_length=1),
+        token: str = Query(..., min_length=1),
     ) -> None:
+        # Перевіряємо токен ДО accept: невалідний → закриваємо рукостискання.
+        try:
+            data = verify_token(token, expected_room=room_id)
+        except AuthError as exc:
+            logger.warning(
+                "ws.auth_rejected",
+                extra={"room_id": room_id, "reason": str(exc)},
+            )
+            await websocket.close(code=4401)
+            return
+        user_id = data.user_id
+        username = data.username
+
         await connection_manager.connect(room_id, websocket)
         db_session_id = None
         try:

@@ -127,6 +127,24 @@ class AuditEntry(BaseModel):
     created_at: datetime
 
 
+class AuthRequest(BaseModel):
+    """Запит на видачу токена сесії (POST /auth/session)."""
+
+    room: str = Field(min_length=1, max_length=64)
+    username: str = Field(min_length=1, max_length=64)
+    # Клієнт може передати свій сталий guest-id (з localStorage), щоб
+    # особистість не «стрибала» після refresh. Сервер його підпише.
+    user_id: str | None = Field(default=None, max_length=64)
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user_id: str
+    username: str
+    room: str
+    expires_at: datetime
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     version: str
