@@ -116,9 +116,32 @@ docker compose down -v          # повне очищення
 ### Tests
 
 ```bash
-cd backend && pytest -v         # 77+ async-тестів
+cd backend && pytest -v         # 86 async-тестів
 cd frontend && npm run lint     # ESLint + react-hooks
 ```
+
+## Метрики та навантажувальне тестування
+
+Для Розділу 4 (дослідження та експерименти) бекенд віддає метрики, а в
+`backend/benchmarks/` лежить навантажувальний стенд.
+
+```bash
+# Знімок метрик процесу (дешевий, без Docker-викликів)
+curl http://localhost:8000/metrics
+#   active_rooms, ws_connections, commands_total/failed,
+#   command_latency_ms { avg, p50, p95, p99, max }
+
+# Памʼять активних sandbox-ів (через docker stats, on-demand)
+curl http://localhost:8000/metrics/sandboxes
+
+# Навантажувальний прогін: N кімнат × M студентів × K команд
+cd backend
+python -m benchmarks.load_test --rooms 4 --users 3 --commits 8
+python -m benchmarks.load_test --rooms 1 --users 1 --commits 50 --json
+```
+
+Стенд друкує перцентилі латентності команд, пропускну здатність (команд/с),
+частку помилок і споживання памʼяті sandbox-ів — готові цифри для таблиць ПЗ.
 
 ## WebSocket протокол
 

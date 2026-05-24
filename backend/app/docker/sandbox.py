@@ -387,6 +387,32 @@ class SandboxManager:
     def get(self, room_id: str) -> SandboxContainer | None:
         return self._containers.get(room_id)
 
+    async def memory_usage(self) -> dict[str, int]:
+        """Поточне споживання памʼяті активними sandbox-ами (байти).
+
+        Через `docker stats` (stream=False) — повільно, бо daemon сэмплює
+        ~1 c на контейнер. Тому лише для on-demand метрик / бенчмарку, НЕ
+        для гарячого шляху. Контейнери, що зникли, тихо пропускаємо.
+        """
+        async with self._lock:
+            items = list(self._containers.items())
+        if not items:
+            return {}
+        client = await self._client_or_connect()
+        usage: dict[str, int] = {}
+        for room_id, sb in items:
+            try:
+                container = await asyncio.to_thread(
+                    client.containers.get, sb.container_id
+                )
+                stats = await asyncio.to_thread(container.stats, stream=False)
+            except (NotFound, APIError, DockerException):
+                continue
+            mem = stats.get("memory_stats", {}).get("usage")
+            if isinstance(mem, int):
+                usage[room_id] = mem
+        return usage
+
 
 # Модуль-рівневий singleton — імпортуємо у хендлерах і lifespan.
 # docker-клієнт ініціалізується ліниво в _client_or_connect, тому

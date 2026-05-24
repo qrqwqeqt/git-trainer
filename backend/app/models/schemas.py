@@ -122,3 +122,35 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     version: str
     uptime_seconds: float
+
+
+class LatencyStats(BaseModel):
+    """Статистика латентності git-команд (мс) для Розділу 4."""
+
+    count: int
+    avg_ms: float
+    p50_ms: float
+    p95_ms: float
+    p99_ms: float
+    max_ms: float
+
+
+class MetricsResponse(BaseModel):
+    """Знімок метрик процесу: кімнати, з'єднання, латентність команд."""
+
+    uptime_seconds: float
+    active_rooms: int
+    max_rooms: int
+    ws_connections: int
+    rooms_with_connections: int
+    commands_total: int
+    commands_failed: int
+    command_latency_ms: LatencyStats
+
+
+class SandboxMemoryResponse(BaseModel):
+    """Споживання памʼяті активними sandbox-контейнерами (on-demand)."""
+
+    count: int
+    total_mib: float
+    per_room_mib: dict[str, float]

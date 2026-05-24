@@ -89,6 +89,16 @@ class ConnectionManager:
         room = self._rooms.get(room_id)
         return len(room.connections) if room else 0
 
+    def stats(self) -> tuple[int, int]:
+        """(всього з'єднань, активних кімнат) — швидкий снепшот для /metrics.
+
+        Читаємо без локу: дрібна неузгодженість лічильників прийнятна для
+        метрик і не варта блокування broadcast/connect.
+        """
+        rooms = list(self._rooms.values())
+        total = sum(len(r.connections) for r in rooms)
+        return total, len(rooms)
+
 
 # Модуль-рівневий singleton — імпортуємо у хендлерах і main.py
 connection_manager = ConnectionManager()

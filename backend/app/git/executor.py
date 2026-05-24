@@ -16,10 +16,12 @@ from __future__ import annotations
 import logging
 import re
 import shlex
+import time
 from dataclasses import dataclass, field
 
 from app.docker.sandbox import SandboxManager
 from app.git.parser import LOG_ARGV, parse_graph
+from app.metrics import git_metrics
 from app.models.schemas import GraphPayload
 
 logger = logging.getLogger(__name__)
@@ -136,7 +138,10 @@ class GitCommandExecutor:
         argv = self._validate(command)
         subcommand = argv[1]
 
+        start = time.perf_counter()
         result = await self.sandbox.exec(self.room_id, argv, env=self._env)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        git_metrics.record(elapsed_ms, failed=result.exit_code != 0)
 
         graph: GraphPayload | None = None
         if (

@@ -25,7 +25,13 @@ from app.api import rooms_router, sessions_router, users_router
 from app.config import Settings, get_settings
 from app.db import close_db, init_db
 from app.docker.sandbox import SandboxError, sandbox_manager
-from app.models.schemas import HealthResponse
+from app.metrics import git_metrics
+from app.models.schemas import (
+    HealthResponse,
+    LatencyStats,
+    MetricsResponse,
+    SandboxMemoryResponse,
+)
 from app.ws.handlers import dispatch, on_user_joined, on_user_left
 from app.ws.manager import connection_manager
 
@@ -120,6 +126,50 @@ def create_app() -> FastAPI:
         started_at = getattr(app.state, "started_at", None)
         uptime = max(0.0, time.monotonic() - started_at) if started_at else 0.0
         return HealthResponse(version=__version__, uptime_seconds=uptime)
+
+    # Metrics — дешевий in-memory знімок для Розділу 4 (без Docker-викликів).
+    @app.get("/metrics", response_model=MetricsResponse, tags=["meta"])
+    async def metrics() -> MetricsResponse:
+        started_at = getattr(app.state, "started_at", None)
+        uptime = max(0.0, time.monotonic() - started_at) if started_at else 0.0
+        ws_total, rooms_active = connection_manager.stats()
+        snap = git_metrics.snapshot()
+        settings = get_settings()
+        return MetricsResponse(
+            uptime_seconds=uptime,
+            active_rooms=sandbox_manager.active_count(),
+            max_rooms=settings.max_rooms,
+            ws_connections=ws_total,
+            rooms_with_connections=rooms_active,
+            commands_total=git_metrics.total,
+            commands_failed=git_metrics.failed,
+            command_latency_ms=LatencyStats(
+                count=snap.count,
+                avg_ms=snap.avg_ms,
+                p50_ms=snap.p50_ms,
+                p95_ms=snap.p95_ms,
+                p99_ms=snap.p99_ms,
+                max_ms=snap.max_ms,
+            ),
+        )
+
+    # Sandbox memory — окремо, бо docker stats повільний (on-demand для бенчмарку).
+    @app.get(
+        "/metrics/sandboxes",
+        response_model=SandboxMemoryResponse,
+        tags=["meta"],
+    )
+    async def sandbox_metrics() -> SandboxMemoryResponse:
+        usage = await sandbox_manager.memory_usage()
+        per_room_mib = {
+            room: round(b / 1024 / 1024, 1) for room, b in usage.items()
+        }
+        total_mib = round(sum(usage.values()) / 1024 / 1024, 1)
+        return SandboxMemoryResponse(
+            count=len(usage),
+            total_mib=total_mib,
+            per_room_mib=per_room_mib,
+        )
 
     # WebSocket endpoint: /ws/{room_id}?user_id=...&username=...
     @app.websocket("/ws/{room_id}")
