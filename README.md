@@ -116,7 +116,8 @@ docker compose down -v          # повне очищення
 ### Tests
 
 ```bash
-cd backend && pytest -v         # 86 async-тестів
+cd backend && pytest -v         # 101 async-тест
+cd frontend && npm test         # Vitest + RTL (31 тестів)
 cd frontend && npm run lint     # ESLint + react-hooks
 ```
 
