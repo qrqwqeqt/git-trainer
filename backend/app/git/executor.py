@@ -14,6 +14,7 @@ Workflow:
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 from dataclasses import dataclass, field
 
@@ -54,6 +55,12 @@ READONLY_GIT_SUBCOMMANDS: frozenset[str] = frozenset(
 _FORBIDDEN_TOKENS: tuple[str, ...] = (";", "&&", "||", "|", ">", "<", "`", "$(")
 
 
+def _email_slug(name: str) -> str:
+    """Згенерувати латинський slug для синтетичного email автора."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "student"
+
+
 class GitCommandError(Exception):
     """Команда не пройшла валідацію або впала у sandbox."""
 
@@ -73,9 +80,34 @@ class ExecOutcome:
 class GitCommandExecutor:
     """Валідує та виконує Git-команди у sandbox-контейнері кімнати."""
 
-    def __init__(self, room_id: str, sandbox: SandboxManager) -> None:
+    def __init__(
+        self,
+        room_id: str,
+        sandbox: SandboxManager,
+        *,
+        author_name: str | None = None,
+        author_email: str | None = None,
+    ) -> None:
         self.room_id = room_id
         self.sandbox = sandbox
+        # Git-env, щоб коміт підписувався реальним студентом, а не глобальним
+        # "Student" з образу. Завдяки цьому ховер у графі показує справжнього
+        # автора (ключова частина multi-user-задуму).
+        self._env = self._build_author_env(author_name, author_email)
+
+    @staticmethod
+    def _build_author_env(
+        author_name: str | None, author_email: str | None
+    ) -> dict[str, str] | None:
+        if not author_name:
+            return None
+        email = author_email or f"{_email_slug(author_name)}@git-trainer.local"
+        return {
+            "GIT_AUTHOR_NAME": author_name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": author_name,
+            "GIT_COMMITTER_EMAIL": email,
+        }
 
     def _validate(self, command: str) -> list[str]:
         """Розібрати команду і перевірити whitelist. Кидає GitCommandError."""
@@ -104,7 +136,7 @@ class GitCommandExecutor:
         argv = self._validate(command)
         subcommand = argv[1]
 
-        result = await self.sandbox.exec(self.room_id, argv)
+        result = await self.sandbox.exec(self.room_id, argv, env=self._env)
 
         graph: GraphPayload | None = None
         if (

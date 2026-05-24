@@ -142,6 +142,7 @@ async def on_user_left(
 async def on_git_command(
     room_id: str,
     user_id: str,
+    username: str,
     command: str,
     sender: WebSocket,
 ) -> None:
@@ -167,7 +168,9 @@ async def on_git_command(
         await _send_error(sender, "sandbox_unavailable", str(exc))
         return
 
-    executor = GitCommandExecutor(room_id, sandbox_manager)
+    executor = GitCommandExecutor(
+        room_id, sandbox_manager, author_name=username
+    )
     try:
         outcome = await executor.run(command)
     except GitCommandError as exc:
@@ -221,6 +224,7 @@ async def on_unknown_message(
 async def dispatch(
     room_id: str,
     user_id: str,
+    username: str,
     raw: dict[str, Any],
     sender: WebSocket,
 ) -> None:
@@ -231,7 +235,7 @@ async def dispatch(
         if not command:
             await on_unknown_message(room_id, user_id, raw, sender)
             return
-        await on_git_command(room_id, user_id, command, sender)
+        await on_git_command(room_id, user_id, username, command, sender)
     else:
         await on_unknown_message(room_id, user_id, raw, sender)
 

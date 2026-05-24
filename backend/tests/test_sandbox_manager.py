@@ -227,7 +227,24 @@ async def test_exec_returns_decoded_output(patch_docker, settings):
     assert result.exit_code == 0
     assert result.stdout == "on branch main\n"
     assert result.stderr == ""
-    container.exec_run.assert_called_once_with(["git", "status"], demux=True)
+    container.exec_run.assert_called_once_with(
+        ["git", "status"], demux=True, environment=None
+    )
+
+
+async def test_exec_forwards_env(patch_docker, settings):
+    """env-словник доходить до docker exec_run (author-identity path)."""
+    mgr = SandboxManager(settings=settings)
+    await mgr.start("r1")
+    container = patch_docker.containers.get.return_value
+    container.exec_run.return_value = (0, (b"", b""))
+
+    env = {"GIT_AUTHOR_NAME": "Dzhe", "GIT_AUTHOR_EMAIL": "dzhe@git-trainer.local"}
+    await mgr.exec("r1", ["git", "commit", "-m", "x"], env=env)
+
+    container.exec_run.assert_called_once_with(
+        ["git", "commit", "-m", "x"], demux=True, environment=env
+    )
 
 
 async def test_exec_handles_none_streams(patch_docker, settings):

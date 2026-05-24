@@ -307,11 +307,16 @@ class SandboxManager:
         argv: list[str],
         *,
         timeout: float = EXEC_TIMEOUT_SECONDS,
+        env: dict[str, str] | None = None,
     ) -> ExecResult:
         """Виконати argv всередині sandbox-контейнера.
 
         Повертає ExecResult з exit_code та декодованими stdout/stderr
         (UTF-8, errors=replace для безпеки).
+
+        `env` — додаткові змінні оточення для exec (напр. GIT_AUTHOR_NAME під
+        конкретного студента). Передаються напряму у docker exec; shell не
+        задіяний (argv — список), тож ризику ін'єкції немає.
 
         NOTE про тайм-аут: реалізовано через `asyncio.wait_for`. Якщо тайм-аут
         спрацьовує, сама команда у контейнері продовжує виконуватись — docker
@@ -335,7 +340,9 @@ class SandboxManager:
 
         try:
             exit_code, output = await asyncio.wait_for(
-                asyncio.to_thread(container.exec_run, argv, demux=True),
+                asyncio.to_thread(
+                    container.exec_run, argv, demux=True, environment=env
+                ),
                 timeout=timeout,
             )
         except asyncio.TimeoutError as exc:

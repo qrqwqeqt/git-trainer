@@ -140,7 +140,7 @@ def create_app() -> FastAPI:
                 if not isinstance(raw, dict):
                     # Ігноруємо не-об'єкти; клієнт має слати JSON-об'єкти.
                     continue
-                await dispatch(room_id, user_id, raw, websocket)
+                await dispatch(room_id, user_id, username, raw, websocket)
         except WebSocketDisconnect:
             logger.info(
                 "ws.client_disconnected",

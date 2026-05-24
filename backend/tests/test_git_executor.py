@@ -92,7 +92,33 @@ async def test_run_status_no_graph_refresh(fake_sandbox):
     assert outcome.stdout == "On branch main\n"
     assert outcome.argv == ["git", "status"]
     assert outcome.graph is None
-    fake_sandbox.exec.assert_called_once_with("r1", ["git", "status"])
+    fake_sandbox.exec.assert_called_once_with("r1", ["git", "status"], env=None)
+
+
+async def test_run_passes_author_env_when_named(fake_sandbox):
+    """author_name → exec отримує GIT_AUTHOR_*/GIT_COMMITTER_* env."""
+    fake_sandbox.exec.return_value = ExecResult(
+        exit_code=0, stdout="On branch main\n", stderr=""
+    )
+    executor = GitCommandExecutor("r1", fake_sandbox, author_name="Іван Петренко")
+    await executor.run("git status")
+
+    env = fake_sandbox.exec.call_args.kwargs["env"]
+    assert env["GIT_AUTHOR_NAME"] == "Іван Петренко"
+    assert env["GIT_COMMITTER_NAME"] == "Іван Петренко"
+    # email синтезується з латинського slug; кирилиця → дефіси, отже fallback
+    assert env["GIT_AUTHOR_EMAIL"].endswith("@git-trainer.local")
+    assert env["GIT_AUTHOR_EMAIL"] == env["GIT_COMMITTER_EMAIL"]
+
+
+async def test_run_no_author_env_when_anonymous(fake_sandbox):
+    """Без author_name → env=None (git бере defaults образу)."""
+    fake_sandbox.exec.return_value = ExecResult(
+        exit_code=0, stdout="On branch main\n", stderr=""
+    )
+    executor = GitCommandExecutor("r1", fake_sandbox)
+    await executor.run("git status")
+    assert fake_sandbox.exec.call_args.kwargs["env"] is None
 
 
 async def test_run_commit_refreshes_graph(fake_sandbox):
