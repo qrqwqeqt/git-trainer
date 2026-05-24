@@ -195,7 +195,7 @@ git-trainer/
 - ✅ **Фаза 2** — DB persistence (users · rooms · sessions, async SQLAlchemy).
 - ✅ **Фаза 3** — UI polish (dark theme, GitKraken-style граф, editable fields, reset).
 - ✅ **Фаза 4** — Landing, share-link, брендинг, README.
-- ⬜ **Фаза 5** — Docker sandbox integration: real `git` execution в контейнері (зараз — in-process executor).
+- ✅ **Фаза 5** — Docker sandbox integration: реальне виконання `git` у контейнері (`network=none`, whitelist, per-student author).
 - ⬜ **Фаза 6** — Deployment: docker-compose у production, домен, HTTPS.
 
 ## Контекст
