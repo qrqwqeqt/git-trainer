@@ -27,8 +27,8 @@
 
 .room__logo {
   display: block;
-  width: 24px;
-  height: 24px;
+  height: 36px;
+  width: auto;
 }
 
 .room__inputs {

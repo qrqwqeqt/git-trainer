@@ -84,8 +84,8 @@ export function Landing({ prefillRoom, onEnter }: LandingProps) {
           src="/logo.svg"
           alt=""
           className="landing__logo"
-          width={64}
-          height={64}
+          width={178}
+          height={96}
         />
         <h1 className="landing__title">Git Trainer</h1>
         <p className="landing__subtitle">

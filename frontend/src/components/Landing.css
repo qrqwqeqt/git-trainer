@@ -25,8 +25,8 @@
 
 .landing__logo {
   display: block;
-  width: 64px;
-  height: 64px;
+  height: 96px;
+  width: auto;
   margin: 0 auto 0.25rem;
 }
 

@@ -94,8 +94,8 @@ export function Room({ session, onSessionChange }: RoomProps) {
             src="/logo.svg"
             alt="Git Trainer"
             className="room__logo"
-            width={24}
-            height={24}
+            width={67}
+            height={36}
           />
           <strong>Git Trainer</strong>
         </div>
