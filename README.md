@@ -106,12 +106,17 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-### Docker (повна локальна збірка)
+### Docker (повний стек однією командою)
 
 ```bash
-docker compose up --build       # backend + sandbox-image + frontend
-docker compose down -v          # повне очищення
+docker compose up --build       # db (Postgres) + sandbox-image + backend + frontend
+docker compose down -v          # зупинити + видалити volume-и
 ```
+
+Після старту: frontend — http://localhost:8080, API/WS — http://localhost:8000.
+Backend піднімає sandbox-контейнери через примонтований `/var/run/docker.sock`
+(потрібен Docker Desktop / Linux із доступом до сокета); образ
+`git-trainer-sandbox` збирається автоматично сервісом `sandbox-builder`.
 
 ### Tests
 

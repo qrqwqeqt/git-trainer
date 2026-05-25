@@ -1,0 +1,72 @@
+# Git Trainer — повний локальний стек однією командою:
+#   docker compose up --build
+#
+# Сервіси: db (Postgres) · backend (FastAPI) · frontend (nginx) ·
+#          sandbox-builder (збирає образ пісочниці й виходить).
+#
+# ВАЖЛИВО: backend керує sandbox-контейнерами через примонтований docker.sock —
+# це sibling-контейнери на хост-демоні (network=none). Тому потрібен Docker
+# Desktop / Linux із доступом до /var/run/docker.sock. Образ git-trainer-sandbox
+# збирається сервісом sandbox-builder ДО старту backend (depends_on).
+#
+# Порти: frontend → http://localhost:8080, backend/API → http://localhost:8000.
+
+name: git-trainer
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gittrainer
+      POSTGRES_PASSWORD: gittrainer
+      POSTGRES_DB: gittrainer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gittrainer -d gittrainer"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # Будує образ git-trainer-sandbox:latest на хост-демоні та одразу виходить.
+  # Завдяки depends_on backend стартує лише після успішної збірки образу.
+  sandbox-builder:
+    build:
+      context: ./docker/sandbox
+    image: git-trainer-sandbox:latest
+    command: ["true"]
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gittrainer:gittrainer@db:5432/gittrainer
+      SANDBOX_IMAGE: git-trainer-sandbox:latest
+      SECRET_KEY: change-me-in-production
+      CORS_ORIGINS: '["http://localhost:8080","http://localhost:5173"]'
+    ports:
+      - "8000:8000"
+    volumes:
+      # Доступ до хост-демона, щоб піднімати sandbox-контейнери.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+      sandbox-builder:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # VITE_* вшиваються у статику; браузер ходить на хост-порти.
+        VITE_API_URL: http://localhost:8000
+        VITE_WS_URL: ws://localhost:8000/ws
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
