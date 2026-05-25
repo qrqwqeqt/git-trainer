@@ -243,7 +243,8 @@ git-trainer/
 - ✅ **Фаза 3** — UI polish (dark theme, GitKraken-style граф, editable fields, reset).
 - ✅ **Фаза 4** — Landing, share-link, брендинг, README.
 - ✅ **Фаза 5** — Docker sandbox integration: реальне виконання `git` у контейнері (`network=none`, whitelist, per-student author).
-- ⬜ **Фаза 6** — Deployment: docker-compose у production, домен, HTTPS.
+- ✅ **Фаза 5.5** — Безпека (токен сесії, аудит, rate-limit), метрики + навантажувальний стенд, тести фронтенду (Vitest).
+- 🟡 **Фаза 6** — Deployment: `docker compose up` (db + backend + frontend) ✅; залишилось — домен, HTTPS, CI.
 
 ## Контекст
 
