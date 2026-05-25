@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/qrqwqeqt/git-trainer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/qrqwqeqt/git-trainer/actions/workflows/ci.yml/badge.svg" /></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.12-3776ab?logo=python&logoColor=white" />
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=white" />
@@ -244,7 +245,7 @@ git-trainer/
 - ✅ **Фаза 4** — Landing, share-link, брендинг, README.
 - ✅ **Фаза 5** — Docker sandbox integration: реальне виконання `git` у контейнері (`network=none`, whitelist, per-student author).
 - ✅ **Фаза 5.5** — Безпека (токен сесії, аудит, rate-limit), метрики + навантажувальний стенд, тести фронтенду (Vitest).
-- 🟡 **Фаза 6** — Deployment: `docker compose up` (db + backend + frontend) ✅; залишилось — домен, HTTPS, CI.
+- 🟡 **Фаза 6** — Deployment: `docker compose up` (db + backend + frontend) ✅, CI (GitHub Actions: pytest + vitest + eslint на кожен push/PR) ✅; залишилось — домен, HTTPS.
 
 ## Контекст
 

@@ -1,0 +1,68 @@
+name: CI
+
+# Прогін тестів і лінтингу на кожен push у main та на кожен pull request.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Нові коміти в ту саму гілку скасовують попередній (ще незавершений) прогін.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend · pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # -m "not docker": інтеграційні тести потребують реального Docker daemon-а
+      # та зібраного sandbox-образу, яких у раннері немає. Решта (unit + WS-смоук)
+      # мокає Docker і ходить у тимчасову SQLite — зовнішніх сервісів не треба.
+      - name: Run tests
+        run: pytest -v -m "not docker"
+
+  frontend:
+    name: Frontend · vitest + eslint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm install (не ci): лок-файл згенеровано на Windows, а Linux-раннеру
+      # потрібні інші optional native-залежності (rolldown/oxc/lightningcss).
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build (typecheck + vite)
+        run: npm run build
