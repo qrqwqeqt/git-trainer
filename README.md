@@ -236,20 +236,3 @@ git-trainer/
 ├── docker/sandbox/            # Dockerfile для git-пісочниці
 └── CLAUDE.md
 ```
-
-## Дорожня карта
-
-- ✅ **Фаза 1** — Backend skeleton (FastAPI + WS + ConnectionManager).
-- ✅ **Фаза 2** — DB persistence (users · rooms · sessions, async SQLAlchemy).
-- ✅ **Фаза 3** — UI polish (dark theme, GitKraken-style граф, editable fields, reset).
-- ✅ **Фаза 4** — Landing, share-link, брендинг, README.
-- ✅ **Фаза 5** — Docker sandbox integration: реальне виконання `git` у контейнері (`network=none`, whitelist, per-student author).
-- ✅ **Фаза 5.5** — Безпека (токен сесії, аудит, rate-limit), метрики + навантажувальний стенд, тести фронтенду (Vitest).
-- 🟡 **Фаза 6** — Deployment: `docker compose up` (db + backend + frontend) ✅, CI (GitHub Actions: pytest + vitest + eslint на кожен push/PR) ✅; залишилось — домен, HTTPS.
-
-## Контекст
-
-Проєкт є бакалаврською дипломною роботою на кафедрі АСОІУ
-Національного технічного університету України «Київський політехнічний
-інститут ім. Ігоря Сікорського», група ІМ-23. Захист — червень 2026.
-Пріоритет — робочий MVP і чистота коду для демонстрації комісії.
